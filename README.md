@@ -31,4 +31,4 @@ Notebook Google Colab tout-en-un pour télécharger l'audio d'un Reel Instagram 
 
 ---
 
-<p align="center">Projet démarré en 2025 et mis à jour régulièrement.</p>
+<p align="center">Projet réalisé en 2026.</p>
