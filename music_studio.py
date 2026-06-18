@@ -51,6 +51,14 @@ def p1_download(url: str, fmt: str = 'mp3', cookies_path: str = '') -> dict:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=True)
             title = info.get('title', 'audio')
+            base = ydl.prepare_filename(info)
+        # Après extraction audio l'extension devient `fmt` (mp3/wav) ; pour le
+        # mp4 c'est déjà la bonne. On cible le fichier exact de CE téléchargement
+        # au lieu du plus récent du dossier (qui pouvait être un ancien fichier).
+        expected = os.path.splitext(base)[0] + f'.{fmt}'
+        if os.path.exists(expected):
+            return {'success': True, 'path': expected, 'title': title, 'error': ''}
+        # Repli : fichier le plus récent du bon format.
         files_found = sorted(glob.glob(f'{out_dir}/*.{fmt}'), key=os.path.getmtime, reverse=True)
         if files_found:
             return {'success': True, 'path': files_found[0], 'title': title, 'error': ''}
@@ -59,7 +67,8 @@ def p1_download(url: str, fmt: str = 'mp3', cookies_path: str = '') -> dict:
         return {'success': False, 'path': '', 'title': '', 'error': str(e)}
 
 def p1_get_audio_files():
-    f = glob.glob('./downloads/*.mp3') + glob.glob('./downloads/*.wav')
+    f = (glob.glob('./downloads/*.mp3') + glob.glob('./downloads/*.wav')
+         + glob.glob('./downloads/*.mp4'))
     return sorted([os.path.basename(x) for x in f])
 
 print('✅ Partie 1 prête')
@@ -125,7 +134,7 @@ P2_MODELS = [
         'id': 'MIT/ast-finetuned-audioset-10-10-0.4593',
         'name': 'AST (MIT AudioSet)',
         'type': 'audio-classification',
-        'description': 'Audio Spectrogram Transformer entraîné sur AudioSet (527 classes)'
+        'description': 'Audio Spectrogram Transformer (AudioSet, 527 classes) — détecte les évènements sonores et instruments, pas uniquement le genre'
     }
 ]
 
@@ -141,7 +150,8 @@ def p2_load_audio_for_hf(path: str, target_sr: int = 16000) -> np.ndarray:
 def p2_run_model(model_info: dict, audio_path: str) -> dict:
     try:
         audio_np = p2_load_audio_for_hf(audio_path)
-        clf = pipeline(model_info['type'], model=model_info['id'])
+        dev = 0 if torch.cuda.is_available() else -1
+        clf = pipeline(model_info['type'], model=model_info['id'], device=dev)
         if model_info['type'] == 'zero-shot-audio-classification':
             results = clf(audio_np, candidate_labels=model_info['labels'], sampling_rate=16000)
         else:
@@ -233,16 +243,21 @@ def p3_save_tmp(audio_np: np.ndarray, sr: int, path: str):
     norm = (audio_np / (np.max(np.abs(audio_np)) + 1e-9) * 32767).astype(np.int16)
     scipy.io.wavfile.write(path, sr, norm)
 
-def p3_generate_chunk(context_np: np.ndarray, sr: int, chunk_dur: int) -> np.ndarray:
+def p3_generate_chunk(context_np: np.ndarray, sr: int, chunk_dur: int, prompt: str = 'music') -> np.ndarray:
+    # MusicGen (small) est un modèle texte→musique : on lui fournit un prompt
+    # texte ET l'audio de contexte (continuation audio-promptée). `padding=True`
+    # est requis quand audio + texte sont combinés.
     max_tokens = int(chunk_dur * p3_model.config.audio_encoder.frame_rate)
     context = context_np[-(sr * 10):]
-    inputs = p3_processor(audio=context, sampling_rate=sr, return_tensors='pt').to(device)
-    inputs['max_new_tokens'] = max_tokens
+    inputs = p3_processor(
+        audio=context, sampling_rate=sr,
+        text=[prompt], padding=True, return_tensors='pt'
+    ).to(device)
     with torch.no_grad():
-        out = p3_model.generate(**inputs)
+        out = p3_model.generate(**inputs, max_new_tokens=max_tokens)
     return out[0, 0].cpu().numpy()
 
-def p3_complete_music(audio_path: str, progress_cb=None) -> dict:
+def p3_complete_music(audio_path: str, progress_cb=None, prompt: str = 'music') -> dict:
     if not p3_load_model():
         return {'success': False, 'path': '', 'error': 'Impossible de charger le modèle'}
 
@@ -267,31 +282,35 @@ def p3_complete_music(audio_path: str, progress_cb=None) -> dict:
                 f'outro : {outro_dur:.0f}s ({n_outro} chunks)')
 
         # --- INTRO ---
-        intro_chunks = []
+        # Un modèle ne génère que "vers l'avant". Pour une intro qui débouche
+        # naturellement sur l'extrait, on retourne l'extrait dans le temps, on
+        # le prolonge, puis on retourne le résultat (les ÉCHANTILLONS, pas juste
+        # l'ordre des blocs). Le contexte reste ancré sur l'audio réel cumulé.
         if n_intro > 0:
-            context = extract.copy()
+            context = extract[::-1].copy()
+            intro_chunks = []
             for i in range(n_intro):
                 dur = min(CHUNK_SIZE, max(1, int(intro_dur - i * CHUNK_SIZE)))
                 if progress_cb:
                     progress_cb(i + 1, total_steps, f'🎵 Intro chunk {i+1}/{n_intro} ({dur}s)...')
-                chunk = p3_generate_chunk(context, sr, dur)
+                chunk = p3_generate_chunk(context, sr, dur, prompt)
                 intro_chunks.append(chunk)
-                context = chunk
-            intro_audio = np.concatenate(intro_chunks[::-1])
+                context = np.concatenate([context, chunk])
+            intro_audio = np.concatenate(intro_chunks)[::-1].copy()
         else:
             intro_audio = np.array([])
 
         # --- OUTRO ---
-        outro_chunks = []
         if n_outro > 0:
             context = extract.copy()
+            outro_chunks = []
             for i in range(n_outro):
                 dur = min(CHUNK_SIZE, max(1, int(outro_dur - i * CHUNK_SIZE)))
                 if progress_cb:
                     progress_cb(n_intro + i + 1, total_steps, f'🎵 Outro chunk {i+1}/{n_outro} ({dur}s)...')
-                chunk = p3_generate_chunk(context, sr, dur)
+                chunk = p3_generate_chunk(context, sr, dur, prompt)
                 outro_chunks.append(chunk)
-                context = chunk
+                context = np.concatenate([context, chunk])
             outro_audio = np.concatenate(outro_chunks)
         else:
             outro_audio = np.array([])
@@ -346,8 +365,10 @@ header = widgets.HTML("""
 
 def refresh_dropdowns(path=''):
     choices = p1_get_audio_files() or ['Aucun fichier']
-    s2_file.options = choices
-    s3_file.options = choices
+    for dd in (s2_file, s3_file):
+        dd.options = choices
+        if dd.value not in choices:          # évite l'exception ipywidgets
+            dd.value = choices[0]
     if path and os.path.basename(path) in choices:
         s2_file.value = os.path.basename(path)
         s3_file.value = os.path.basename(path)
@@ -483,7 +504,7 @@ def on_s2_identify(b):
                 '#fff8e1', '#FFC107'
             )
 
-        html += "<br><b style='color:#555;'>🤖 Analyse des genres :</b>"
+        html += "<br><b style='color:#555;'>🤖 Analyse audio (genre & tags) :</b>"
         for res in results['genres']:
             if res['success']:
                 rows = ''.join([
@@ -513,7 +534,7 @@ s2_btn.on_click(on_s2_identify)
 s3_title = widgets.HTML("<h3 style='color:#6200ea; margin-bottom:8px;'>③ Compléter en 2min30</h3>")
 s3_info = widgets.HTML(info_card(
     '🧩 <b>Comment ça marche ?</b><br>'
-    "L'extrait est positionné au tiers de la durée totale. "
+    "L'extrait est conservé au centre de la piste. "
     "MusicGen génère l'intro et l'outro par chunks de <b>10s</b> enchaînés, "
     'puis tout est assemblé en un fichier WAV de <b>2min30</b>.<br>'
     '<span style="color:#888; font-size:12px;">⚠️ La génération peut prendre 5-10min selon la durée manquante.</span>'
