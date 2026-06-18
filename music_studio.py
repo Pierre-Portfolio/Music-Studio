@@ -157,11 +157,19 @@ def p2_load_audio_for_hf(path: str, target_sr: int = 16000) -> np.ndarray:
     waveform = waveform[:, :target_sr * 30]
     return waveform.squeeze().numpy()
 
-def p2_run_model(model_info: dict, audio_path: str) -> dict:
-    try:
-        audio_np = p2_load_audio_for_hf(audio_path)
+_P2_PIPES = {}
+def p2_get_pipe(model_info: dict):
+    # Chargé une seule fois puis réutilisé : évite de re-télécharger/recharger
+    # le modèle à chaque identification (gros gain de temps).
+    key = model_info['id']
+    if key not in _P2_PIPES:
         dev = 0 if torch.cuda.is_available() else -1
-        clf = pipeline(model_info['type'], model=model_info['id'], device=dev)
+        _P2_PIPES[key] = pipeline(model_info['type'], model=key, device=dev)
+    return _P2_PIPES[key]
+
+def p2_run_model(model_info: dict, audio_np: np.ndarray) -> dict:
+    try:
+        clf = p2_get_pipe(model_info)
         if model_info['type'] == 'zero-shot-audio-classification':
             results = clf(audio_np, candidate_labels=model_info['labels'], sampling_rate=16000)
         else:
@@ -187,11 +195,12 @@ def p2_identify_all(audio_path: str, audd_key: str = '', progress_cb=None) -> di
     if progress_cb: progress_cb(0, total, '⏳ Identification du titre via AudD.io...')
     title_result = p2_identify_title(audio_path, audd_key)
     if progress_cb: progress_cb(1, total, '✅ Titre traité — analyse des genres...')
+    audio_np = p2_load_audio_for_hf(audio_path)   # décodé une seule fois, partagé entre modèles
     genre_results = []
     for i, model_info in enumerate(P2_MODELS):
         if progress_cb:
             progress_cb(1 + i, total, f'⏳ Modèle {i+1}/{len(P2_MODELS)} : {model_info["name"]}...')
-        genre_results.append(p2_run_model(model_info, audio_path))
+        genre_results.append(p2_run_model(model_info, audio_np))
     if progress_cb: progress_cb(total, total, '✅ Analyse complète !')
     return {'title': title_result, 'genres': genre_results}
 
@@ -207,6 +216,7 @@ print('✅ Partie 2 prête —', len(P2_MODELS), 'modèles genre + AudD.io pour 
 print('✅ Dépendances Partie 3 installées')
 
 # Cellule 3.2 — Imports & chargement modèle (small par défaut)
+import os
 import torch
 import torchaudio
 import scipy.io.wavfile
@@ -229,7 +239,9 @@ def p3_load_model():
     try:
         print(f'⏳ Chargement {P3_MODEL_NAME}...')
         p3_processor = AutoProcessor.from_pretrained(P3_MODEL_NAME)
-        p3_model = MusicgenForConditionalGeneration.from_pretrained(P3_MODEL_NAME).to(device)
+        dtype = torch.float16 if device == 'cuda' else torch.float32   # fp16 sur GPU : ~2x + moins de VRAM
+        p3_model = MusicgenForConditionalGeneration.from_pretrained(
+            P3_MODEL_NAME, torch_dtype=dtype).to(device)
         print(f'✅ Modèle chargé sur {device.upper()}')
         return True
     except Exception as e:
@@ -240,7 +252,7 @@ print('✅ Partie 3 prête (modèle chargé à la première génération)')
 
 # Cellule 3.3 — Fonctions de génération et assemblage
 TARGET_DURATION = 150  # 2min30 en secondes
-CHUNK_SIZE = 10        # secondes par chunk
+CHUNK_SIZE = 20        # secondes par chunk (plus grand = moins d'appels generate)
 
 def p3_load_audio_mono(path: str, target_sr: int) -> np.ndarray:
     waveform, sr = torchaudio.load(path)
@@ -254,6 +266,24 @@ def p3_save_tmp(audio_np: np.ndarray, sr: int, path: str):
     norm = (audio_np / (np.max(np.abs(audio_np)) + 1e-9) * 32767).astype(np.int16)
     scipy.io.wavfile.write(path, sr, norm)
 
+def p3_crossfade_join(parts, sr, fade=0.05):
+    # Fond enchaîné court aux jonctions pour lisser clics et sauts de volume.
+    parts = [p for p in parts if len(p) > 0]
+    if not parts:
+        return np.array([])
+    n = max(1, int(sr * fade))
+    out = parts[0].astype(np.float32)
+    for nxt in parts[1:]:
+        nxt = nxt.astype(np.float32)
+        m = min(n, len(out), len(nxt))
+        if m > 0:
+            ramp = np.linspace(0.0, 1.0, m, dtype=np.float32)
+            out[-m:] = out[-m:] * (1 - ramp) + nxt[:m] * ramp
+            out = np.concatenate([out, nxt[m:]])
+        else:
+            out = np.concatenate([out, nxt])
+    return out
+
 def p3_generate_chunk(context_np: np.ndarray, sr: int, chunk_dur: int, prompt: str = 'music') -> np.ndarray:
     # MusicGen (small) est un modèle texte→musique : on lui fournit un prompt
     # texte ET l'audio de contexte (continuation audio-promptée). `padding=True`
@@ -264,9 +294,11 @@ def p3_generate_chunk(context_np: np.ndarray, sr: int, chunk_dur: int, prompt: s
         audio=context, sampling_rate=sr,
         text=[prompt], padding=True, return_tensors='pt'
     ).to(device)
-    with torch.no_grad():
+    if device == 'cuda' and 'input_values' in inputs:
+        inputs['input_values'] = inputs['input_values'].half()   # aligne le dtype sur le modèle fp16
+    with torch.inference_mode():
         out = p3_model.generate(**inputs, max_new_tokens=max_tokens)
-    return out[0, 0].cpu().numpy()
+    return out[0, 0].float().cpu().numpy()
 
 def p3_complete_music(audio_path: str, progress_cb=None, prompt: str = 'music') -> dict:
     if not p3_load_model():
@@ -326,9 +358,8 @@ def p3_complete_music(audio_path: str, progress_cb=None, prompt: str = 'music') 
         else:
             outro_audio = np.array([])
 
-        # --- ASSEMBLAGE ---
-        parts = [p for p in [intro_audio, extract, outro_audio] if len(p) > 0]
-        full_audio = np.concatenate(parts)
+        # --- ASSEMBLAGE (avec léger crossfade aux jonctions) ---
+        full_audio = p3_crossfade_join([intro_audio, extract, outro_audio], sr, fade=0.05)
         out_path = './generated/completed_music.wav'
         p3_save_tmp(full_audio, sr, out_path)
         actual_dur = len(full_audio) / sr
@@ -342,7 +373,7 @@ def p3_complete_music(audio_path: str, progress_cb=None, prompt: str = 'music') 
     except Exception as e:
         return {'success': False, 'path': '', 'duration': 0, 'error': str(e)}
 
-print('✅ Fonctions Partie 3 prêtes — cible 2min30, chunks 10s, modèle small')
+print('✅ Fonctions Partie 3 prêtes — cible 2min30, chunks 20s, modèle small')
 
 """---
 ## 🖥️ PARTIE 4 — Interface graphique unifiée
@@ -547,7 +578,7 @@ s3_title = widgets.HTML("<h3 style='color:#6200ea; margin-bottom:8px;'>③ Compl
 s3_info = widgets.HTML(info_card(
     '🧩 <b>Comment ça marche ?</b><br>'
     "L'extrait est conservé au centre de la piste. "
-    "MusicGen génère l'intro et l'outro par chunks de <b>10s</b> enchaînés, "
+    "MusicGen génère l'intro et l'outro par chunks de <b>20s</b> enchaînés, "
     'puis tout est assemblé en un fichier WAV de <b>2min30</b>.<br>'
     '<span style="color:#888; font-size:12px;">⚠️ La génération peut prendre 5-10min selon la durée manquante.</span>'
 ))
