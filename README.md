@@ -33,7 +33,7 @@ Notebook **Google Colab** tout-en-un qui transforme un court extrait audio en un
 ### ③ Complétion musicale (→ 2min30)
 - Génération des parties manquantes par **MusicGen** (`facebook/musicgen-small`, Meta)
 - L'extrait original est conservé au centre ; le modèle compose une **intro (≈45 %)** et une **outro (≈55 %)** pour atteindre la cible de **150 s (2min30)**
-- Génération **par chunks de 10 s** enchaînés, chaque chunk servant de contexte au suivant
+- Génération **par chunks de 20 s** enchaînés, chaque chunk servant de contexte au suivant
 - Assemblage final `intro + extrait + outro` exporté en **WAV** dans `./generated/completed_music.wav`
 - Détection automatique du **GPU** (CUDA) avec repli sur CPU et avertissement
 - Lecteur audio intégré et téléchargement direct du résultat
@@ -86,7 +86,7 @@ URL Reel / Short
 ②  AudD.io (titre)  +  CLAP & AST (genre)
       │
       ▼
-③  MusicGen ──▶ intro 45% + extrait + outro 55%  (chunks 10s)
+③  MusicGen ──▶ intro 45% + extrait + outro 55%  (chunks 20s)
       │
       ▼
    ./generated/completed_music.wav   (≈ 2min30)

@@ -358,6 +358,14 @@ def p3_complete_music(audio_path: str, progress_cb=None, prompt: str = 'music') 
         else:
             outro_audio = np.array([])
 
+        # --- CADRAGE DURÉE : borne intro/outro pour ne pas dépasser la cible ---
+        # (le ceil sur le nombre de chunks peut générer un peu plus que prévu ;
+        # on garde l'extrait intact et on rogne le surplus généré aux extrémités.)
+        if intro_dur > 0 and len(intro_audio) > int(intro_dur * sr):
+            intro_audio = intro_audio[-int(intro_dur * sr):]   # garde la fin (près de l'extrait)
+        if outro_dur > 0 and len(outro_audio) > int(outro_dur * sr):
+            outro_audio = outro_audio[:int(outro_dur * sr)]    # garde le début (près de l'extrait)
+
         # --- ASSEMBLAGE (avec léger crossfade aux jonctions) ---
         full_audio = p3_crossfade_join([intro_audio, extract, outro_audio], sr, fade=0.05)
         out_path = './generated/completed_music.wav'
@@ -386,7 +394,10 @@ print('✅ ipywidgets installé')
 # Cellule 4.2 — Interface graphique unifiée
 import ipywidgets as widgets
 from IPython.display import display, Audio, HTML, clear_output
-from google.colab import files as colab_files
+try:
+    from google.colab import files as colab_files
+except ImportError:        # permet d'importer le module hors Colab (tests / lint)
+    colab_files = None
 
 def card(content, color='#f0fff0', border='#4CAF50'):
     return f"<div style='background:{color}; padding:14px; border-radius:10px; border:1px solid {border}; margin:6px 0;'>{content}</div>"
@@ -459,7 +470,8 @@ def on_s1_download(b):
             )))
             if s1_fmt.value in ['mp3', 'wav']:
                 display(Audio(res['path']))
-            colab_files.download(res['path'])
+            if colab_files:
+                colab_files.download(res['path'])
             refresh_dropdowns(res['path'])
         else:
             display(HTML(error_card(res['error'])))
@@ -467,6 +479,8 @@ def on_s1_download(b):
 def on_s1_upload(b):
     with s1_out:
         clear_output()
+        if colab_files is None:
+            display(HTML(error_card("Import local disponible uniquement dans Google Colab."))); return
         display(HTML(info_card('⏳ Sélectionne ton fichier...')))
         uploaded = colab_files.upload()
         if uploaded:
@@ -503,7 +517,7 @@ s2_file = widgets.Dropdown(
     style={'description_width': '70px'}
 )
 s2_refresh = widgets.Button(description='🔄', layout=widgets.Layout(width='50px'))
-s2_refresh.on_click(lambda b: setattr(s2_file, 'options', p1_get_audio_files() or ['Aucun fichier']))
+s2_refresh.on_click(lambda b: refresh_dropdowns())   # MAJ + corrige la value (évite TraitError)
 s2_progress_bar = widgets.IntProgress(value=0, min=0, max=3,
     description='', layout=widgets.Layout(width='580px'))
 s2_progress_label = widgets.HTML('')
@@ -589,7 +603,7 @@ s3_file = widgets.Dropdown(
     style={'description_width': '70px'}
 )
 s3_refresh = widgets.Button(description='🔄', layout=widgets.Layout(width='50px'))
-s3_refresh.on_click(lambda b: setattr(s3_file, 'options', p1_get_audio_files() or ['Aucun fichier']))
+s3_refresh.on_click(lambda b: refresh_dropdowns())   # MAJ + corrige la value (évite TraitError)
 s3_progress_bar = widgets.IntProgress(value=0, min=0, max=100,
     description='', layout=widgets.Layout(width='580px'))
 s3_progress_label = widgets.HTML('')
@@ -622,7 +636,8 @@ def on_s3_generate(b):
                 f"📦 Taille : {size_kb:.0f} KB"
             )))
             display(Audio(res['path']))
-            colab_files.download(res['path'])
+            if colab_files:
+                colab_files.download(res['path'])
         else:
             display(HTML(error_card(res['error'])))
 
