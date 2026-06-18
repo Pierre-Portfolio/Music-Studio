@@ -94,6 +94,7 @@ print('✅ Partie 1 prête')
 print('✅ Dépendances Partie 2 installées')
 
 # Cellule 2.2 — Imports & fonctions Partie 2
+import os
 import torch
 import torchaudio
 import numpy as np
@@ -150,8 +151,22 @@ P2_MODELS = [
     }
 ]
 
-def p2_load_audio_for_hf(path: str, target_sr: int = 16000) -> np.ndarray:
+# Cache de décodage : torchaudio.load est coûteux ; on évite de re-décoder le
+# même fichier entre l'identification (Partie 2) et la complétion (Partie 3).
+# On ne conserve que le dernier fichier décodé (mémoire bornée).
+_AUDIO_RAW_CACHE = {}
+def _load_raw(path: str):
+    mtime = os.path.getmtime(path)
+    cached = _AUDIO_RAW_CACHE.get(path)
+    if cached and cached[0] == mtime:
+        return cached[1], cached[2]
     waveform, sr = torchaudio.load(path)
+    _AUDIO_RAW_CACHE.clear()
+    _AUDIO_RAW_CACHE[path] = (mtime, waveform, sr)
+    return waveform, sr
+
+def p2_load_audio_for_hf(path: str, target_sr: int = 16000) -> np.ndarray:
+    waveform, sr = _load_raw(path)
     if sr != target_sr:
         waveform = torchaudio.functional.resample(waveform, sr, target_sr)
     if waveform.shape[0] > 1:
@@ -257,7 +272,7 @@ TARGET_DURATION = 150  # 2min30 en secondes
 CHUNK_SIZE = 20        # secondes par chunk (plus grand = moins d'appels generate)
 
 def p3_load_audio_mono(path: str, target_sr: int) -> np.ndarray:
-    waveform, sr = torchaudio.load(path)
+    waveform, sr = _load_raw(path)
     if sr != target_sr:
         waveform = torchaudio.functional.resample(waveform, sr, target_sr)
     if waveform.shape[0] > 1:
@@ -340,7 +355,7 @@ def p3_complete_music(audio_path: str, progress_cb=None, prompt: str = 'music') 
                     progress_cb(i + 1, total_steps, f'🎵 Intro chunk {i+1}/{n_intro} ({dur}s)...')
                 chunk = p3_generate_chunk(context, sr, dur, prompt)
                 intro_chunks.append(chunk)
-                context = np.concatenate([context, chunk])
+                context = np.concatenate([context, chunk])[-(sr * 10):]   # contexte borné (seule la fin sert à generate)
             intro_audio = np.concatenate(intro_chunks)[::-1].copy()
         else:
             intro_audio = np.array([])
@@ -355,7 +370,7 @@ def p3_complete_music(audio_path: str, progress_cb=None, prompt: str = 'music') 
                     progress_cb(n_intro + i + 1, total_steps, f'🎵 Outro chunk {i+1}/{n_outro} ({dur}s)...')
                 chunk = p3_generate_chunk(context, sr, dur, prompt)
                 outro_chunks.append(chunk)
-                context = np.concatenate([context, chunk])
+                context = np.concatenate([context, chunk])[-(sr * 10):]   # contexte borné (seule la fin sert à generate)
             outro_audio = np.concatenate(outro_chunks)
         else:
             outro_audio = np.array([])
