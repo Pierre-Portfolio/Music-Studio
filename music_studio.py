@@ -17,8 +17,10 @@ Original file is located at
 """
 
 # Cellule 1.1 — Installation Partie 1
+# yt-dlp est volontairement NON épinglé : il doit rester à jour pour suivre les
+# changements d'Instagram/YouTube (une version figée casse l'extraction avec le temps).
 import sys
-!{sys.executable} -m pip install yt-dlp --quiet
+!{sys.executable} -m pip install -U yt-dlp --quiet
 print('✅ yt-dlp installé')
 
 # Cellule 1.2 — Imports & fonctions Partie 1
@@ -54,7 +56,7 @@ def p1_download(url: str, fmt: str = 'mp3', cookies_path: str = '') -> dict:
             }],
             'quiet': True, 'no_warnings': True,
         }
-    if cookies_path and os.path.exists(cookies_path):
+    if cookies_path and os.path.isfile(cookies_path):   # isfile : refuse répertoires / chemins spéciaux
         ydl_opts['cookiefile'] = cookies_path
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -88,7 +90,7 @@ print('✅ Partie 1 prête')
 
 # Cellule 2.1 — Installation Partie 2
 # Versions épinglées (reproductibilité + réduit le risque supply-chain).
-!pip install "transformers==4.44.2" torch torchaudio requests --quiet
+!pip install "transformers==4.44.2" "requests==2.32.3" torch torchaudio --quiet  # torch/torchaudio : versions Colab préinstallées
 print('✅ Dépendances Partie 2 installées')
 
 # Cellule 2.2 — Imports & fonctions Partie 2
@@ -212,7 +214,7 @@ print('✅ Partie 2 prête —', len(P2_MODELS), 'modèles genre + AudD.io pour 
 
 # Cellule 3.1 — Installation Partie 3
 # Versions épinglées (reproductibilité + réduit le risque supply-chain).
-!pip install "transformers==4.44.2" "accelerate==0.34.2" scipy torchaudio --quiet
+!pip install "transformers==4.44.2" "accelerate==0.34.2" "scipy==1.13.1" torchaudio --quiet
 print('✅ Dépendances Partie 3 installées')
 
 # Cellule 3.2 — Imports & chargement modèle (small par défaut)
@@ -388,21 +390,28 @@ print('✅ Fonctions Partie 3 prêtes — cible 2min30, chunks 20s, modèle smal
 """
 
 # Cellule 4.1 — Installation UI
-!pip install ipywidgets --quiet
+!pip install "ipywidgets==8.1.5" --quiet
 print('✅ ipywidgets installé')
 
 # Cellule 4.2 — Interface graphique unifiée
 import ipywidgets as widgets
+import html as _html
 from IPython.display import display, Audio, HTML, clear_output
 try:
     from google.colab import files as colab_files
 except ImportError:        # permet d'importer le module hors Colab (tests / lint)
     colab_files = None
 
+# Échappement HTML : toute donnée externe (métadonnées AudD, noms de fichiers,
+# messages d'erreur, labels de modèle) est passée par esc() avant injection dans
+# l'UI -> évite l'injection HTML/XSS dans les cartes affichées.
+def esc(value):
+    return _html.escape(str(value))
+
 def card(content, color='#f0fff0', border='#4CAF50'):
     return f"<div style='background:{color}; padding:14px; border-radius:10px; border:1px solid {border}; margin:6px 0;'>{content}</div>"
 def error_card(msg):
-    return card(f'<b>❌ Erreur</b><br>{msg}', '#fff0f0', '#f44336')
+    return card(f'<b>❌ Erreur</b><br>{esc(msg)}', '#fff0f0', '#f44336')
 def info_card(msg):
     return card(msg, '#f0f4ff', '#5c6bc0')
 def sep():
@@ -465,8 +474,8 @@ def on_s1_download(b):
         if res['success']:
             size_kb = os.path.getsize(res['path']) / 1024
             display(HTML(card(
-                f"<b>✅ {src} — {res['title']}</b><br>"
-                f"📁 {os.path.basename(res['path'])} · {size_kb:.0f} KB"
+                f"<b>✅ {src} — {esc(res['title'])}</b><br>"
+                f"📁 {esc(os.path.basename(res['path']))} · {size_kb:.0f} KB"
             )))
             if s1_fmt.value in ['mp3', 'wav']:
                 display(Audio(res['path']))
@@ -490,7 +499,7 @@ def on_s1_upload(b):
                 dest = f'./downloads/{safe}'
                 with open(dest, 'wb') as f:
                     f.write(data)
-                display(HTML(card(f'✅ <b>{safe}</b> importé !')))
+                display(HTML(card(f'✅ <b>{esc(safe)}</b> importé !')))
                 display(Audio(dest))
                 refresh_dropdowns(dest)
 
@@ -546,17 +555,17 @@ def on_s2_identify(b):
         html = "<h4 style='color:#FF9800;'>🎯 Résultats d'identification</h4>"
         tr = results['title']
         if tr['success']:
-            spotify_btn = f" &nbsp;<a href='{tr['spotify_url']}' target='_blank' style='color:#1DB954;'>▶ Spotify</a>" if tr.get('spotify_url') else ''
-            apple_btn = f" &nbsp;<a href='{tr['apple_url']}' target='_blank' style='color:#fc3c44;'>🍎 Apple Music</a>" if tr.get('apple_url') else ''
+            spotify_btn = f" &nbsp;<a href='{esc(tr['spotify_url'])}' target='_blank' style='color:#1DB954;'>▶ Spotify</a>" if tr.get('spotify_url') else ''
+            apple_btn = f" &nbsp;<a href='{esc(tr['apple_url'])}' target='_blank' style='color:#fc3c44;'>🍎 Apple Music</a>" if tr.get('apple_url') else ''
             html += card(
-                f"<b>🎵 {tr['title']}</b> — {tr['artist']}<br>"
-                f"💿 {tr['album']} · 📅 {tr.get('release_date','?')}"
+                f"<b>🎵 {esc(tr['title'])}</b> — {esc(tr['artist'])}<br>"
+                f"💿 {esc(tr['album'])} · 📅 {esc(tr.get('release_date','?'))}"
                 f"{spotify_btn}{apple_btn}",
                 '#f0fff0', '#4CAF50'
             )
         else:
             html += card(
-                f"🎵 <b>Titre non identifié</b> — {tr['error']}<br>"
+                f"🎵 <b>Titre non identifié</b> — {esc(tr['error'])}<br>"
                 f"<span style='color:#888; font-size:12px;'>Ajoute une clé AudD.io pour identifier le titre exact.</span>",
                 '#fff8e1', '#FFC107'
             )
@@ -567,7 +576,7 @@ def on_s2_identify(b):
                 rows = ''.join([
                     f"<tr>"
                     f"<td style='padding:3px 10px;'>#{i+1}</td>"
-                    f"<td style='padding:3px 10px;'><b>{r['label']}</b></td>"
+                    f"<td style='padding:3px 10px;'><b>{esc(r['label'])}</b></td>"
                     f"<td style='padding:3px 10px; color:#4CAF50;'>{r['score']*100:.1f}%</td>"
                     f"<td style='padding:3px 10px;'><div style='background:#4CAF50; height:10px; width:{r['score']*200:.0f}px; border-radius:5px;'></div></td>"
                     f"</tr>"
@@ -580,7 +589,7 @@ def on_s2_identify(b):
                 )
             else:
                 html += card(
-                    f"<b>🤖 {res['model_name']}</b> — ❌ {res['error']}",
+                    f"<b>🤖 {esc(res['model_name'])}</b> — ❌ {esc(res['error'])}",
                     '#fff0f0', '#f44336'
                 )
         display(HTML(html))
