@@ -25,6 +25,15 @@ print('✅ yt-dlp installé')
 import yt_dlp, os, glob
 
 def p1_download(url: str, fmt: str = 'mp3', cookies_path: str = '') -> dict:
+    # Validation d'URL : limite aux domaines Instagram / YouTube en http(s)
+    # (évite qu'une URL arbitraire — file://, hôte interne… — soit passée à yt-dlp).
+    from urllib.parse import urlparse
+    parsed = urlparse(url)
+    allowed = ('instagram.com', 'youtube.com', 'youtu.be')
+    host = (parsed.hostname or '').lower()
+    if parsed.scheme not in ('http', 'https') or not any(host == d or host.endswith('.' + d) for d in allowed):
+        return {'success': False, 'path': '', 'title': '',
+                'error': 'URL non autorisée (Instagram / YouTube en http(s) uniquement).'}
     out_dir = './downloads'
     os.makedirs(out_dir, exist_ok=True)
     if fmt == 'mp4':
@@ -78,7 +87,8 @@ print('✅ Partie 1 prête')
 """
 
 # Cellule 2.1 — Installation Partie 2
-!pip install transformers torch torchaudio requests --quiet
+# Versions épinglées (reproductibilité + réduit le risque supply-chain).
+!pip install "transformers==4.44.2" torch torchaudio requests --quiet
 print('✅ Dépendances Partie 2 installées')
 
 # Cellule 2.2 — Imports & fonctions Partie 2
@@ -192,7 +202,8 @@ print('✅ Partie 2 prête —', len(P2_MODELS), 'modèles genre + AudD.io pour 
 """
 
 # Cellule 3.1 — Installation Partie 3
-!pip install transformers accelerate scipy torchaudio --quiet
+# Versions épinglées (reproductibilité + réduit le risque supply-chain).
+!pip install "transformers==4.44.2" "accelerate==0.34.2" scipy torchaudio --quiet
 print('✅ Dépendances Partie 3 installées')
 
 # Cellule 3.2 — Imports & chargement modèle (small par défaut)
@@ -430,10 +441,11 @@ def on_s1_upload(b):
         if uploaded:
             os.makedirs('./downloads', exist_ok=True)
             for fname, data in uploaded.items():
-                dest = f'./downloads/{fname}'
+                safe = os.path.basename(fname)   # neutralise un éventuel path traversal (../)
+                dest = f'./downloads/{safe}'
                 with open(dest, 'wb') as f:
                     f.write(data)
-                display(HTML(card(f'✅ <b>{fname}</b> importé !')))
+                display(HTML(card(f'✅ <b>{safe}</b> importé !')))
                 display(Audio(dest))
                 refresh_dropdowns(dest)
 
@@ -447,7 +459,7 @@ s2_info = widgets.HTML(info_card(
     '+ <b>2 modèles HuggingFace</b> pour le genre musical.<br>'
     '<span style="color:#888; font-size:12px;">Sans clé AudD, seuls les genres seront détectés. Total : ~2-4min.</span>'
 ))
-s2_audd_key = widgets.Text(
+s2_audd_key = widgets.Password(
     placeholder='Colle ta clé API AudD.io ici (optionnel)',
     description='AudD Key :',
     layout=widgets.Layout(width='500px'),
