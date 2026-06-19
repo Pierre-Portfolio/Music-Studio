@@ -48,6 +48,7 @@ def p1_download(url: str, fmt: str = 'mp3', cookies_path: str = '') -> dict:
             'merge_output_format': 'mp4',
             'restrictfilenames': True,
             'max_filesize': MAX_FILESIZE,
+            'noplaylist': True,
             'quiet': True, 'no_warnings': True,
         }
     else:
@@ -56,6 +57,7 @@ def p1_download(url: str, fmt: str = 'mp3', cookies_path: str = '') -> dict:
             'outtmpl': f'{out_dir}/%(title)s.%(ext)s',
             'restrictfilenames': True,
             'max_filesize': MAX_FILESIZE,
+            'noplaylist': True,
             'postprocessors': [{
                 'key': 'FFmpegExtractAudio',
                 'preferredcodec': fmt,
@@ -63,7 +65,9 @@ def p1_download(url: str, fmt: str = 'mp3', cookies_path: str = '') -> dict:
             }],
             'quiet': True, 'no_warnings': True,
         }
-    if cookies_path and os.path.isfile(cookies_path):   # isfile : refuse répertoires / chemins spéciaux
+    # isfile : refuse répertoires / chemins spéciaux ; .txt : restreint à un vrai
+    # fichier cookies (réduit la lecture de fichiers locaux arbitraires).
+    if cookies_path and os.path.isfile(cookies_path) and cookies_path.lower().endswith('.txt'):
         ydl_opts['cookiefile'] = cookies_path
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
