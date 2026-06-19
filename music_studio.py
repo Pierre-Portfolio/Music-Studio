@@ -169,27 +169,33 @@ P2_MODELS = [
 
 # Cache de décodage : torchaudio.load est coûteux ; on évite de re-décoder le
 # même fichier entre l'identification (Partie 2) et la complétion (Partie 3).
-# On ne conserve que le dernier fichier décodé (mémoire bornée).
-_AUDIO_RAW_CACHE = {}
+# LRU borné aux 2 derniers fichiers : alterner entre deux pistes ne force plus
+# un re-décodage à chaque bascule (mémoire restant bornée).
+from collections import OrderedDict
+_AUDIO_RAW_CACHE = OrderedDict()
+_AUDIO_RAW_MAX = 2
 def _load_raw(path: str):
     mtime = os.path.getmtime(path)
     cached = _AUDIO_RAW_CACHE.get(path)
     if cached and cached[0] == mtime:
+        _AUDIO_RAW_CACHE.move_to_end(path)
         return cached[1], cached[2]
     waveform, sr = torchaudio.load(path)
-    _AUDIO_RAW_CACHE.clear()
     _AUDIO_RAW_CACHE[path] = (mtime, waveform, sr)
+    _AUDIO_RAW_CACHE.move_to_end(path)
+    while len(_AUDIO_RAW_CACHE) > _AUDIO_RAW_MAX:
+        _AUDIO_RAW_CACHE.popitem(last=False)
     return waveform, sr
 
 def _to_mono(path: str, target_sr: int, max_seconds=None) -> np.ndarray:
     # Chargement mono + rééchantillonnage, partagé entre P2 et P3.
     waveform, sr = _load_raw(path)
     if max_seconds is not None:
-        waveform = waveform[:, :int(max_seconds * sr)]   # tronquer AVANT le resample :
-    if sr != target_sr:                                  # évite de rééchantillonner tout
-        waveform = torchaudio.functional.resample(waveform, sr, target_sr)  # le fichier pour n'en garder que le début
-    if waveform.shape[0] > 1:
-        waveform = waveform.mean(dim=0, keepdim=True)
+        waveform = waveform[:, :int(max_seconds * sr)]   # tronquer AVANT le resample
+    if waveform.shape[0] > 1:                            # mono AVANT le resample : ~2x moins
+        waveform = waveform.mean(dim=0, keepdim=True)    # d'échantillons à rééchantillonner
+    if sr != target_sr:
+        waveform = torchaudio.functional.resample(waveform, sr, target_sr)
     return waveform.squeeze().numpy().copy()             # copie : ne pas exposer le tenseur du cache
 
 def p2_load_audio_for_hf(path: str, target_sr: int = 16000) -> np.ndarray:
