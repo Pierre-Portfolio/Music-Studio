@@ -77,10 +77,15 @@ def p1_download(url: str, fmt: str = 'mp3', cookies_path: str = '') -> dict:
     except Exception as e:
         return {'success': False, 'path': '', 'title': '', 'error': str(e)}
 
-def p1_get_audio_files():
-    f = (glob.glob('./downloads/*.mp3') + glob.glob('./downloads/*.wav')
-         + glob.glob('./downloads/*.mp4'))
-    return sorted([os.path.basename(x) for x in f])
+def p1_get_audio_files(audio_only: bool = True):
+    # Les dropdowns d'identification (P2) et de complétion (P3) ne doivent lister
+    # que des fichiers décodables par torchaudio : on exclut les .mp4 (conteneur
+    # vidéo non décodable tel quel) par défaut.
+    patterns = ['*.mp3', '*.wav'] if audio_only else ['*.mp3', '*.wav', '*.mp4']
+    f = []
+    for pat in patterns:
+        f += glob.glob(f'./downloads/{pat}')
+    return sorted(os.path.basename(x) for x in f)
 
 print('✅ Partie 1 prête')
 
@@ -280,6 +285,9 @@ def p3_load_audio_mono(path: str, target_sr: int) -> np.ndarray:
     return waveform.squeeze().numpy()
 
 def p3_save_tmp(audio_np: np.ndarray, sr: int, path: str):
+    if audio_np.size == 0:                       # garde : np.max([]) lèverait ValueError
+        scipy.io.wavfile.write(path, sr, np.zeros(1, dtype=np.int16))
+        return
     norm = (audio_np / (np.max(np.abs(audio_np)) + 1e-9) * 32767).astype(np.int16)
     scipy.io.wavfile.write(path, sr, norm)
 
