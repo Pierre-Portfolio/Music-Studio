@@ -117,7 +117,9 @@ print('✅ Partie 1 prête')
 
 # Cellule 2.1 — Installation Partie 2
 # Versions épinglées (reproductibilité + réduit le risque supply-chain).
-!pip install "transformers==4.44.2" "requests==2.32.3" "torch==2.4.0" "torchaudio==2.4.0" --quiet  # versions épinglées (supply-chain + reproductibilité ; ajuste si le runtime Colab change)
+# requests aligné sur 2.32.4 = version attendue par google-colab/google-adk (supprime les warnings de conflit).
+# Note : torchvision préinstallé dans Colab attend torch 2.11.0 -> un warning peut subsister, mais sans impact ici (torchvision n'est jamais importé).
+!pip install "transformers==4.44.2" "requests==2.32.4" "torch==2.4.0" "torchaudio==2.4.0" --quiet  # versions épinglées (supply-chain + reproductibilité ; ajuste si le runtime Colab change)
 print('✅ Dépendances Partie 2 installées')
 
 # Cellule 2.2 — Imports & fonctions Partie 2
