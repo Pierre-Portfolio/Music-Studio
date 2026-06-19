@@ -38,17 +38,24 @@ def p1_download(url: str, fmt: str = 'mp3', cookies_path: str = '') -> dict:
                 'error': 'URL non autorisée (Instagram / YouTube en http(s) uniquement).'}
     out_dir = './downloads'
     os.makedirs(out_dir, exist_ok=True)
+    # Garde-fous communs : borne la taille (évite de saturer le disque de la VM
+    # avec une longue vidéo) et restreint les noms de fichiers (titres exotiques).
+    MAX_FILESIZE = 200 * 1024 * 1024  # 200 Mo
     if fmt == 'mp4':
         ydl_opts = {
             'format': 'bestvideo+bestaudio/best',
             'outtmpl': f'{out_dir}/%(title)s.%(ext)s',
             'merge_output_format': 'mp4',
+            'restrictfilenames': True,
+            'max_filesize': MAX_FILESIZE,
             'quiet': True, 'no_warnings': True,
         }
     else:
         ydl_opts = {
             'format': 'bestaudio/best',
             'outtmpl': f'{out_dir}/%(title)s.%(ext)s',
+            'restrictfilenames': True,
+            'max_filesize': MAX_FILESIZE,
             'postprocessors': [{
                 'key': 'FFmpegExtractAudio',
                 'preferredcodec': fmt,
@@ -95,7 +102,7 @@ print('✅ Partie 1 prête')
 
 # Cellule 2.1 — Installation Partie 2
 # Versions épinglées (reproductibilité + réduit le risque supply-chain).
-!pip install "transformers==4.44.2" "requests==2.32.3" torch torchaudio --quiet  # torch/torchaudio : versions Colab préinstallées
+!pip install "transformers==4.44.2" "requests==2.32.3" "torch==2.4.0" "torchaudio==2.4.0" --quiet  # versions épinglées (supply-chain + reproductibilité ; ajuste si le runtime Colab change)
 print('✅ Dépendances Partie 2 installées')
 
 # Cellule 2.2 — Imports & fonctions Partie 2
@@ -234,7 +241,7 @@ print('✅ Partie 2 prête —', len(P2_MODELS), 'modèles genre + AudD.io pour 
 
 # Cellule 3.1 — Installation Partie 3
 # Versions épinglées (reproductibilité + réduit le risque supply-chain).
-!pip install "transformers==4.44.2" "accelerate==0.34.2" "scipy==1.13.1" torchaudio --quiet
+!pip install "transformers==4.44.2" "accelerate==0.34.2" "scipy==1.13.1" "torchaudio==2.4.0" --quiet
 print('✅ Dépendances Partie 3 installées')
 
 # Cellule 3.2 — Imports & chargement modèle (small par défaut)
