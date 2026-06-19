@@ -118,8 +118,11 @@ print('✅ Partie 1 prête')
 # Cellule 2.1 — Installation Partie 2
 # Versions épinglées (reproductibilité + réduit le risque supply-chain).
 # requests aligné sur 2.32.4 = version attendue par google-colab/google-adk (supprime les warnings de conflit).
-# Note : torchvision préinstallé dans Colab attend torch 2.11.0 -> un warning peut subsister, mais sans impact ici (torchvision n'est jamais importé).
-!pip install "transformers==4.44.2" "requests==2.32.4" "torch==2.4.0" "torchaudio==2.4.0" --quiet  # versions épinglées (supply-chain + reproductibilité ; ajuste si le runtime Colab change)
+# torchvision épinglé sur 0.19.0 = version compatible avec torch 2.4.0. INDISPENSABLE :
+# transformers.pipelines importe torchvision s'il est présent, et la version préinstallée
+# par Colab (compilée pour un autre torch) casse l'import avec
+# « RuntimeError: operator torchvision::nms does not exist ».
+!pip install "transformers==4.44.2" "requests==2.32.4" "torch==2.4.0" "torchvision==0.19.0" "torchaudio==2.4.0" --quiet  # versions épinglées ET alignées entre elles (torch/torchvision/torchaudio)
 print('✅ Dépendances Partie 2 installées')
 
 # Cellule 2.2 — Imports & fonctions Partie 2
