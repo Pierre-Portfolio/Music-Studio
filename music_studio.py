@@ -118,11 +118,9 @@ print('✅ Partie 1 prête')
 # Cellule 2.1 — Installation Partie 2
 # Versions épinglées (reproductibilité + réduit le risque supply-chain).
 # requests aligné sur 2.32.4 = version attendue par google-colab/google-adk (supprime les warnings de conflit).
-# torchvision épinglé sur 0.19.0 = version compatible avec torch 2.4.0. INDISPENSABLE :
-# transformers.pipelines importe torchvision s'il est présent, et la version préinstallée
-# par Colab (compilée pour un autre torch) casse l'import avec
-# « RuntimeError: operator torchvision::nms does not exist ».
-!pip install "transformers==4.44.2" "requests==2.32.4" "torch==2.4.0" "torchvision==0.19.0" "torchaudio==2.4.0" --quiet  # versions épinglées ET alignées entre elles (torch/torchvision/torchaudio)
+# torch/torchaudio alignés sur 2.11.0 = version attendue par le torchvision préinstallé de Colab.
+# Évite « RuntimeError: operator torchvision::nms does not exist » sans réinstaller torchvision.
+!pip install "transformers==4.44.2" "requests==2.32.4" "torch==2.11.0" "torchaudio==2.11.0" --quiet  # versions épinglées et alignées sur le runtime Colab
 print('✅ Dépendances Partie 2 installées')
 
 # Cellule 2.2 — Imports & fonctions Partie 2
@@ -282,7 +280,8 @@ print('✅ Partie 2 prête —', len(P2_MODELS), 'modèles genre + AudD.io pour 
 
 # Cellule 3.1 — Installation Partie 3
 # Versions épinglées (reproductibilité + réduit le risque supply-chain).
-!pip install "transformers==4.44.2" "accelerate==0.34.2" "scipy==1.13.1" "torchaudio==2.4.0" --quiet
+# torchaudio aligné sur 2.11.0 = même version que torch (cohérence avec la Partie 2).
+!pip install "transformers==4.44.2" "accelerate==0.34.2" "scipy==1.13.1" "torchaudio==2.11.0" --quiet
 print('✅ Dépendances Partie 3 installées')
 
 # Cellule 3.2 — Imports & chargement modèle (small par défaut)
