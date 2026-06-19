@@ -177,14 +177,19 @@ def _load_raw(path: str):
     _AUDIO_RAW_CACHE[path] = (mtime, waveform, sr)
     return waveform, sr
 
-def p2_load_audio_for_hf(path: str, target_sr: int = 16000) -> np.ndarray:
+def _to_mono(path: str, target_sr: int, max_seconds=None) -> np.ndarray:
+    # Chargement mono + rééchantillonnage, partagé entre P2 et P3.
     waveform, sr = _load_raw(path)
-    if sr != target_sr:
-        waveform = torchaudio.functional.resample(waveform, sr, target_sr)
+    if max_seconds is not None:
+        waveform = waveform[:, :int(max_seconds * sr)]   # tronquer AVANT le resample :
+    if sr != target_sr:                                  # évite de rééchantillonner tout
+        waveform = torchaudio.functional.resample(waveform, sr, target_sr)  # le fichier pour n'en garder que le début
     if waveform.shape[0] > 1:
         waveform = waveform.mean(dim=0, keepdim=True)
-    waveform = waveform[:, :target_sr * 30]
-    return waveform.squeeze().numpy()
+    return waveform.squeeze().numpy().copy()             # copie : ne pas exposer le tenseur du cache
+
+def p2_load_audio_for_hf(path: str, target_sr: int = 16000) -> np.ndarray:
+    return _to_mono(path, target_sr, max_seconds=30)
 
 _P2_PIPES = {}
 def p2_get_pipe(model_info: dict):
@@ -284,12 +289,7 @@ TARGET_DURATION = 150  # 2min30 en secondes
 CHUNK_SIZE = 20        # secondes par chunk (plus grand = moins d'appels generate)
 
 def p3_load_audio_mono(path: str, target_sr: int) -> np.ndarray:
-    waveform, sr = _load_raw(path)
-    if sr != target_sr:
-        waveform = torchaudio.functional.resample(waveform, sr, target_sr)
-    if waveform.shape[0] > 1:
-        waveform = waveform.mean(dim=0, keepdim=True)
-    return waveform.squeeze().numpy()
+    return _to_mono(path, target_sr)
 
 def p3_save_tmp(audio_np: np.ndarray, sr: int, path: str):
     if audio_np.size == 0:                       # garde : np.max([]) lèverait ValueError
