@@ -127,10 +127,10 @@ def p2_identify_title(audio_path: str, audd_key: str) -> dict:
             apple = r.get('apple_music') or {}
             return {
                 'success': True,
-                'title': r.get('title', '?'),
-                'artist': r.get('artist', '?'),
-                'album': r.get('album', '?'),
-                'release_date': r.get('release_date', '?'),
+                'title': r.get('title') or '?',
+                'artist': r.get('artist') or '?',
+                'album': r.get('album') or '?',
+                'release_date': r.get('release_date') or '?',
                 'spotify_url': spotify.get('external_urls', {}).get('spotify', ''),
                 'apple_url': apple.get('url', ''),
                 'error': ''
@@ -201,13 +201,19 @@ def p2_get_pipe(model_info: dict):
         _P2_PIPES[key] = pipeline(model_info['type'], model=key, device=dev)
     return _P2_PIPES[key]
 
-def p2_run_model(model_info: dict, audio_np: np.ndarray) -> dict:
+def p2_run_model(model_info: dict, audio_path: str) -> dict:
     try:
         clf = p2_get_pipe(model_info)
+        # Chaque modèle attend SON sample rate (CLAP=48k, AST=16k). Décoder à la
+        # fréquence du feature extractor évite d'interpréter le signal à la mauvaise
+        # vitesse -> genres faussés. Le waveform brut reste mis en cache (_load_raw),
+        # seul le rééchantillonnage diffère d'un modèle à l'autre.
+        sr = int(getattr(getattr(clf, 'feature_extractor', None), 'sampling_rate', 16000) or 16000)
+        audio_np = _to_mono(audio_path, sr, max_seconds=30)
         if model_info['type'] == 'zero-shot-audio-classification':
-            results = clf(audio_np, candidate_labels=model_info['labels'], sampling_rate=16000)
+            results = clf(audio_np, candidate_labels=model_info['labels'], sampling_rate=sr)
         else:
-            results = clf(audio_np, sampling_rate=16000, top_k=5)
+            results = clf(audio_np, sampling_rate=sr, top_k=5)
         return {
             'success': True,
             'model_name': model_info['name'],
@@ -229,12 +235,11 @@ def p2_identify_all(audio_path: str, audd_key: str = '', progress_cb=None) -> di
     if progress_cb: progress_cb(0, total, '⏳ Identification du titre via AudD.io...')
     title_result = p2_identify_title(audio_path, audd_key)
     if progress_cb: progress_cb(1, total, '✅ Titre traité — analyse des genres...')
-    audio_np = p2_load_audio_for_hf(audio_path)   # décodé une seule fois, partagé entre modèles
     genre_results = []
     for i, model_info in enumerate(P2_MODELS):
         if progress_cb:
             progress_cb(1 + i, total, f'⏳ Modèle {i+1}/{len(P2_MODELS)} : {model_info["name"]}...')
-        genre_results.append(p2_run_model(model_info, audio_np))
+        genre_results.append(p2_run_model(model_info, audio_path))   # décodé au bon SR par modèle
     if progress_cb: progress_cb(total, total, '✅ Analyse complète !')
     return {'title': title_result, 'genres': genre_results}
 
@@ -400,7 +405,10 @@ def p3_complete_music(audio_path: str, progress_cb=None, prompt: str = 'music') 
 
         # --- ASSEMBLAGE (avec léger crossfade aux jonctions) ---
         full_audio = p3_crossfade_join([intro_audio, extract, outro_audio], sr, fade=0.05)
-        out_path = './generated/completed_music.wav'
+        # Nom de sortie dérivé du fichier source : évite d'écraser silencieusement
+        # le résultat d'un autre morceau déjà complété.
+        stem = os.path.splitext(os.path.basename(audio_path))[0]
+        out_path = f'./generated/{stem}_completed.wav'
         p3_save_tmp(full_audio, sr, out_path)
         actual_dur = len(full_audio) / sr
 
@@ -530,7 +538,8 @@ def on_s1_upload(b):
                 with open(dest, 'wb') as f:
                     f.write(data)
                 display(HTML(card(f'✅ <b>{esc(safe)}</b> importé !')))
-                display(Audio(dest))
+                if safe.lower().endswith(('.mp3', '.wav')):   # Audio() ne lit pas un .mp4
+                    display(Audio(dest))
                 refresh_dropdowns(dest)
 
 s1_btn.on_click(on_s1_download)
