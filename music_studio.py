@@ -41,6 +41,15 @@ def p1_download(url: str, fmt: str = 'mp3', cookies_path: str = '') -> dict:
     # Garde-fous communs : borne la taille (évite de saturer le disque de la VM
     # avec une longue vidéo) et restreint les noms de fichiers (titres exotiques).
     MAX_FILESIZE = 200 * 1024 * 1024  # 200 Mo
+    # `max_filesize` ne s'applique que si le format ANNONCE sa taille ; beaucoup de
+    # flux (HLS, certains Reels) ne la déclarent pas. Ce hook borne réellement le
+    # disque en interrompant dès que la taille (déclarée OU déjà téléchargée) dépasse.
+    def _abort_if_too_big(d):
+        if d.get('status') != 'downloading':
+            return
+        total = d.get('total_bytes') or d.get('total_bytes_estimate') or 0
+        if total > MAX_FILESIZE or d.get('downloaded_bytes', 0) > MAX_FILESIZE:
+            raise Exception('Fichier trop volumineux (> 200 Mo) — téléchargement interrompu.')
     if fmt == 'mp4':
         ydl_opts = {
             'format': 'bestvideo+bestaudio/best',
@@ -48,6 +57,7 @@ def p1_download(url: str, fmt: str = 'mp3', cookies_path: str = '') -> dict:
             'merge_output_format': 'mp4',
             'restrictfilenames': True,
             'max_filesize': MAX_FILESIZE,
+            'progress_hooks': [_abort_if_too_big],
             'noplaylist': True,
             'quiet': True, 'no_warnings': True,
         }
@@ -57,6 +67,7 @@ def p1_download(url: str, fmt: str = 'mp3', cookies_path: str = '') -> dict:
             'outtmpl': f'{out_dir}/%(title)s.%(ext)s',
             'restrictfilenames': True,
             'max_filesize': MAX_FILESIZE,
+            'progress_hooks': [_abort_if_too_big],
             'noplaylist': True,
             'postprocessors': [{
                 'key': 'FFmpegExtractAudio',
@@ -456,6 +467,12 @@ except ImportError:        # permet d'importer le module hors Colab (tests / lin
 def esc(value):
     return _html.escape(str(value))
 
+def safe_url(value):
+    # N'autorise que http(s) : neutralise les schémas dangereux (javascript:, data:…)
+    # même quand l'URL provient d'une API externe (réponse AudD) avant injection en href.
+    u = str(value or '').strip()
+    return u if u.lower().startswith(('http://', 'https://')) else ''
+
 def card(content, color='#f0fff0', border='#4CAF50'):
     return f"<div style='background:{color}; padding:14px; border-radius:10px; border:1px solid {border}; margin:6px 0;'>{content}</div>"
 def error_card(msg):
@@ -604,8 +621,10 @@ def on_s2_identify(b):
         html = "<h4 style='color:#FF9800;'>🎯 Résultats d'identification</h4>"
         tr = results['title']
         if tr['success']:
-            spotify_btn = f" &nbsp;<a href='{esc(tr['spotify_url'])}' target='_blank' style='color:#1DB954;'>▶ Spotify</a>" if tr.get('spotify_url') else ''
-            apple_btn = f" &nbsp;<a href='{esc(tr['apple_url'])}' target='_blank' style='color:#fc3c44;'>🍎 Apple Music</a>" if tr.get('apple_url') else ''
+            _sp = safe_url(tr.get('spotify_url', ''))
+            _ap = safe_url(tr.get('apple_url', ''))
+            spotify_btn = f" &nbsp;<a href='{esc(_sp)}' target='_blank' style='color:#1DB954;'>▶ Spotify</a>" if _sp else ''
+            apple_btn = f" &nbsp;<a href='{esc(_ap)}' target='_blank' style='color:#fc3c44;'>🍎 Apple Music</a>" if _ap else ''
             html += card(
                 f"<b>🎵 {esc(tr['title'])}</b> — {esc(tr['artist'])}<br>"
                 f"💿 {esc(tr['album'])} · 📅 {esc(tr.get('release_date','?'))}"
