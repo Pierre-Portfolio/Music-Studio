@@ -135,7 +135,9 @@ def p2_identify_title(audio_path: str, audd_key: str) -> dict:
     try:
         with open(audio_path, 'rb') as f:
             data = {'api_token': audd_key, 'return': 'apple_music,spotify'}
-            result = requests.post('https://api.audd.io/', data=data, files={'file': f}, timeout=15).json()
+            # timeout = (connexion, lecture) : l'upload d'un WAV un peu lourd
+            # dépasse facilement 15 s -> sinon échec systématique par timeout.
+            result = requests.post('https://api.audd.io/', data=data, files={'file': f}, timeout=(10, 120)).json()
         if result.get('status') == 'success' and result.get('result'):
             r = result['result']
             spotify = r.get('spotify') or {}
@@ -186,13 +188,14 @@ from collections import OrderedDict
 _AUDIO_RAW_CACHE = OrderedDict()
 _AUDIO_RAW_MAX = 2
 def _load_raw(path: str):
-    mtime = os.path.getmtime(path)
-    cached = _AUDIO_RAW_CACHE.get(path)
-    if cached and cached[0] == mtime:
+    st = os.stat(path)
+    sig = (st.st_mtime, st.st_size)      # mtime + taille : invalide le cache même si un
+    cached = _AUDIO_RAW_CACHE.get(path)  # fichier est remplacé en gardant le même mtime
+    if cached and cached[0] == sig:
         _AUDIO_RAW_CACHE.move_to_end(path)
         return cached[1], cached[2]
     waveform, sr = torchaudio.load(path)
-    _AUDIO_RAW_CACHE[path] = (mtime, waveform, sr)
+    _AUDIO_RAW_CACHE[path] = (sig, waveform, sr)
     _AUDIO_RAW_CACHE.move_to_end(path)
     while len(_AUDIO_RAW_CACHE) > _AUDIO_RAW_MAX:
         _AUDIO_RAW_CACHE.popitem(last=False)
@@ -208,9 +211,6 @@ def _to_mono(path: str, target_sr: int, max_seconds=None) -> np.ndarray:
     if sr != target_sr:
         waveform = torchaudio.functional.resample(waveform, sr, target_sr)
     return waveform.squeeze().numpy().copy()             # copie : ne pas exposer le tenseur du cache
-
-def p2_load_audio_for_hf(path: str, target_sr: int = 16000) -> np.ndarray:
-    return _to_mono(path, target_sr, max_seconds=30)
 
 _P2_PIPES = {}
 def p2_get_pipe(model_info: dict):
@@ -232,7 +232,9 @@ def p2_run_model(model_info: dict, audio_path: str) -> dict:
         sr = int(getattr(getattr(clf, 'feature_extractor', None), 'sampling_rate', 16000) or 16000)
         audio_np = _to_mono(audio_path, sr, max_seconds=30)
         if model_info['type'] == 'zero-shot-audio-classification':
-            results = clf(audio_np, candidate_labels=model_info['labels'], sampling_rate=sr)
+            # audio déjà décodé au SR du modèle ; le kwarg sampling_rate n'est pas
+            # accepté par le pipeline zero-shot selon la version de transformers.
+            results = clf(audio_np, candidate_labels=model_info['labels'])
         else:
             results = clf(audio_np, sampling_rate=sr, top_k=5)
         return {
@@ -323,6 +325,15 @@ def p3_save_tmp(audio_np: np.ndarray, sr: int, path: str):
         return
     norm = (audio_np / (np.max(np.abs(audio_np)) + 1e-9) * 32767).astype(np.int16)
     scipy.io.wavfile.write(path, sr, norm)
+
+def _match_peak(arr: np.ndarray, ref_peak: float) -> np.ndarray:
+    # Aligne le pic d'un segment généré sur celui de l'extrait réel : sans ça, une
+    # intro/outro plus forte écrase le volume de l'extrait lors de la normalisation
+    # finale (qui normalise sur le pic global du mix).
+    if arr.size == 0 or ref_peak <= 0:
+        return arr
+    peak = float(np.max(np.abs(arr)))
+    return arr * (ref_peak / peak) if peak > 0 else arr
 
 def p3_crossfade_join(parts, sr, fade=0.05):
     # Fond enchaîné court aux jonctions pour lisser clics et sauts de volume.
@@ -423,6 +434,11 @@ def p3_complete_music(audio_path: str, progress_cb=None, prompt: str = 'music') 
             intro_audio = intro_audio[-int(intro_dur * sr):]   # garde la fin (près de l'extrait)
         if outro_dur > 0 and len(outro_audio) > int(outro_dur * sr):
             outro_audio = outro_audio[:int(outro_dur * sr)]    # garde le début (près de l'extrait)
+
+        # --- ÉQUILIBRAGE VOLUME : aligne intro/outro sur le pic de l'extrait réel ---
+        ref_peak = float(np.max(np.abs(extract))) if extract.size else 0.0
+        intro_audio = _match_peak(intro_audio, ref_peak)
+        outro_audio = _match_peak(outro_audio, ref_peak)
 
         # --- ASSEMBLAGE (avec léger crossfade aux jonctions) ---
         full_audio = p3_crossfade_join([intro_audio, extract, outro_audio], sr, fade=0.05)
