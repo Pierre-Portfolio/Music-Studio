@@ -549,6 +549,10 @@ def refresh_dropdowns(path=''):
         s2_file.value = os.path.basename(path)
         s3_file.value = os.path.basename(path)
 
+# Listing initial calculé une seule fois et partagé par les deux dropdowns
+# (évite de globber le dossier ./downloads une fois par widget à la construction).
+_initial_audio_files = p1_get_audio_files() or ['Aucun fichier']
+
 # ── SECTION 1 ──
 s1_title = widgets.HTML("<h3 style='color:#E1306C; margin-bottom:8px;'>① Télécharger un Reel / Short</h3>")
 s1_hint = widgets.HTML("<span style='color:#555; font-size:13px;'>📌 Instagram Reels & YouTube Shorts / vidéos</span>")
@@ -639,7 +643,7 @@ s2_audd_key = widgets.Password(
     style={'description_width': '90px'}
 )
 s2_file = widgets.Dropdown(
-    options=p1_get_audio_files() or ['Aucun fichier'],
+    options=_initial_audio_files,
     description='Fichier :',
     layout=widgets.Layout(width='500px'),
     style={'description_width': '70px'}
@@ -745,7 +749,7 @@ s3_info = widgets.HTML(info_card(
     '<span style="color:#888; font-size:12px;">⚠️ La génération peut prendre 5-10min selon la durée manquante.</span>'
 ))
 s3_file = widgets.Dropdown(
-    options=p1_get_audio_files() or ['Aucun fichier'],
+    options=_initial_audio_files,
     description='Fichier :',
     layout=widgets.Layout(width='500px'),
     style={'description_width': '70px'}
