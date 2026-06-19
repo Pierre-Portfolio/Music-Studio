@@ -253,15 +253,18 @@ def p2_run_model(model_info: dict, audio_path: str) -> dict:
             'error': str(e)
         }
 
-def p2_identify_all(audio_path: str, audd_key: str = '', progress_cb=None) -> dict:
-    total = 1 + len(P2_MODELS)
+def p2_identify_all(audio_path: str, audd_key: str = '', progress_cb=None, models=None) -> dict:
+    # `models` : sous-ensemble de P2_MODELS choisi dans l'UI (évite de faire tourner
+    # les deux modèles si l'utilisateur n'en veut qu'un — gros gain sur CPU).
+    models = models if models is not None else P2_MODELS
+    total = 1 + len(models)
     if progress_cb: progress_cb(0, total, '⏳ Identification du titre via AudD.io...')
     title_result = p2_identify_title(audio_path, audd_key)
     if progress_cb: progress_cb(1, total, '✅ Titre traité — analyse des genres...')
     genre_results = []
-    for i, model_info in enumerate(P2_MODELS):
+    for i, model_info in enumerate(models):
         if progress_cb:
-            progress_cb(1 + i, total, f'⏳ Modèle {i+1}/{len(P2_MODELS)} : {model_info["name"]}...')
+            progress_cb(1 + i, total, f'⏳ Modèle {i+1}/{len(models)} : {model_info["name"]}...')
         genre_results.append(p2_run_model(model_info, audio_path))   # décodé au bon SR par modèle
     if progress_cb: progress_cb(total, total, '✅ Analyse complète !')
     return {'title': title_result, 'genres': genre_results}
@@ -477,6 +480,18 @@ try:
 except ImportError:        # permet d'importer le module hors Colab (tests / lint)
     colab_files = None
 
+import threading
+def _run_async(button, worker):
+    # Exécute le travail lourd (identification, génération) hors du thread principal
+    # pour ne pas figer l'UI ; le bouton est désactivé le temps du traitement.
+    def runner():
+        try:
+            worker()
+        finally:
+            button.disabled = False
+    button.disabled = True
+    threading.Thread(target=runner, daemon=True).start()
+
 # Échappement HTML : toute donnée externe (métadonnées AudD, noms de fichiers,
 # messages d'erreur, labels de modèle) est passée par esc() avant injection dans
 # l'UI -> évite l'injection HTML/XSS dans les cartes affichées.
@@ -607,6 +622,14 @@ s2_file = widgets.Dropdown(
     layout=widgets.Layout(width='500px'),
     style={'description_width': '70px'}
 )
+s2_model_select = widgets.SelectMultiple(
+    options=[(m['name'], m['id']) for m in P2_MODELS],
+    value=tuple(m['id'] for m in P2_MODELS),   # les 2 modèles par défaut ; décocher pour aller + vite
+    description='Modèles :',
+    rows=len(P2_MODELS),
+    layout=widgets.Layout(width='500px'),
+    style={'description_width': '70px'}
+)
 s2_refresh = widgets.Button(description='🔄', layout=widgets.Layout(width='50px'))
 s2_refresh.on_click(lambda b: refresh_dropdowns())   # MAJ + corrige la value (évite TraitError)
 s2_progress_bar = widgets.IntProgress(value=0, min=0, max=3,
@@ -616,7 +639,7 @@ s2_btn = widgets.Button(description='🔍 Identifier', button_style='warning',
     layout=widgets.Layout(width='160px', height='38px'))
 s2_out = widgets.Output()
 
-def on_s2_identify(b):
+def _s2_identify_work():
     with s2_out:
         clear_output()
         fname = s2_file.value
@@ -624,6 +647,7 @@ def on_s2_identify(b):
             display(HTML(error_card("Télécharge d'abord un fichier en étape ①."))); return
         path = f'./downloads/{fname}'
         audd_key = s2_audd_key.value.strip()
+        chosen = [m for m in P2_MODELS if m['id'] in s2_model_select.value] or P2_MODELS
         s2_progress_bar.value = 0
 
         def progress_cb(step, total, msg):
@@ -631,7 +655,7 @@ def on_s2_identify(b):
             s2_progress_bar.value = step
             s2_progress_label.value = info_card(msg)
 
-        results = p2_identify_all(path, audd_key=audd_key, progress_cb=progress_cb)
+        results = p2_identify_all(path, audd_key=audd_key, progress_cb=progress_cb, models=chosen)
         clear_output()
 
         html = "<h4 style='color:#FF9800;'>🎯 Résultats d'identification</h4>"
@@ -678,6 +702,9 @@ def on_s2_identify(b):
                 )
         display(HTML(html))
 
+def on_s2_identify(b):
+    _run_async(s2_btn, _s2_identify_work)
+
 s2_btn.on_click(on_s2_identify)
 
 # ── SECTION 3 ──
@@ -704,7 +731,7 @@ s3_btn = widgets.Button(description='🎼 Générer 2min30', button_style='succe
     layout=widgets.Layout(width='200px', height='42px'))
 s3_out = widgets.Output()
 
-def on_s3_generate(b):
+def _s3_generate_work():
     with s3_out:
         clear_output()
         fname = s3_file.value
@@ -734,6 +761,9 @@ def on_s3_generate(b):
         else:
             display(HTML(error_card(res['error'])))
 
+def on_s3_generate(b):
+    _run_async(s3_btn, _s3_generate_work)
+
 s3_btn.on_click(on_s3_generate)
 
 # ── ASSEMBLAGE FINAL ──
@@ -747,6 +777,7 @@ ui = widgets.VBox([
     s2_title, s2_info,
     s2_audd_key,
     widgets.HBox([s2_file, s2_refresh]),
+    s2_model_select,
     s2_progress_bar, s2_progress_label,
     s2_btn,
     s2_out,
