@@ -488,12 +488,23 @@ except ImportError:        # permet d'importer le module hors Colab (tests / lin
     colab_files = None
 
 import threading
-def _run_async(button, worker):
+# Verrou GPU/CPU : empêche l'identification (P2) et la génération (P3) de tourner
+# en même temps. Deux tâches lourdes sur le même device (et sur les modèles
+# globaux partagés) -> risque d'OOM ou de résultats corrompus.
+_GPU_LOCK = threading.Lock()
+
+def _run_async(button, worker, out=None):
     # Exécute le travail lourd (identification, génération) hors du thread principal
     # pour ne pas figer l'UI ; le bouton est désactivé le temps du traitement.
     def runner():
         try:
             worker()
+        except Exception as e:
+            # Filet : sans ça, une erreur imprévue (hors des fonctions qui catchent
+            # déjà) partirait dans stderr du thread et l'UI resterait vide.
+            if out is not None:
+                with out:
+                    display(HTML(error_card(f'Erreur inattendue : {e}')))
         finally:
             button.disabled = False
     button.disabled = True
@@ -570,7 +581,11 @@ def on_s1_download(b):
         url = s1_url.value.strip()
         if not url:
             display(HTML(error_card("Merci d'entrer une URL."))); return
-        src = '📸 Instagram' if 'instagram.com' in url else '▶️ YouTube'
+        # Étiquette de source basée sur le hostname réel (et non une sous-chaîne
+        # de l'URL brute, qui pouvait mal classer certaines URLs).
+        from urllib.parse import urlparse
+        _host = (urlparse(url).hostname or '').lower()
+        src = '📸 Instagram' if (_host == 'instagram.com' or _host.endswith('.instagram.com')) else '▶️ YouTube'
         display(HTML(info_card(f'⏳ Téléchargement depuis {src}...')))
         res = p1_download(url, s1_fmt.value, s1_cookies.value.strip())
         clear_output()
@@ -653,64 +668,70 @@ def _s2_identify_work():
         if fname == 'Aucun fichier':
             display(HTML(error_card("Télécharge d'abord un fichier en étape ①."))); return
         path = f'./downloads/{fname}'
-        audd_key = s2_audd_key.value.strip()
-        chosen = [m for m in P2_MODELS if m['id'] in s2_model_select.value] or P2_MODELS
-        s2_progress_bar.value = 0
+        # Verrou : une seule tâche lourde (P2/P3) à la fois sur le device.
+        if not _GPU_LOCK.acquire(blocking=False):
+            display(HTML(info_card('⏳ Une autre tâche est déjà en cours (identification ou génération). Réessaie quand elle sera terminée.'))); return
+        try:
+            audd_key = s2_audd_key.value.strip()
+            chosen = [m for m in P2_MODELS if m['id'] in s2_model_select.value] or P2_MODELS
+            s2_progress_bar.value = 0
 
-        def progress_cb(step, total, msg):
-            s2_progress_bar.max = max(total, 1)
-            s2_progress_bar.value = step
-            s2_progress_label.value = info_card(msg)
+            def progress_cb(step, total, msg):
+                s2_progress_bar.max = max(total, 1)
+                s2_progress_bar.value = step
+                s2_progress_label.value = info_card(msg)
 
-        results = p2_identify_all(path, audd_key=audd_key, progress_cb=progress_cb, models=chosen)
-        clear_output()
+            results = p2_identify_all(path, audd_key=audd_key, progress_cb=progress_cb, models=chosen)
+            clear_output()
 
-        html = "<h4 style='color:#FF9800;'>🎯 Résultats d'identification</h4>"
-        tr = results['title']
-        if tr['success']:
-            _sp = safe_url(tr.get('spotify_url', ''))
-            _ap = safe_url(tr.get('apple_url', ''))
-            spotify_btn = f" &nbsp;<a href='{esc(_sp)}' target='_blank' style='color:#1DB954;'>▶ Spotify</a>" if _sp else ''
-            apple_btn = f" &nbsp;<a href='{esc(_ap)}' target='_blank' style='color:#fc3c44;'>🍎 Apple Music</a>" if _ap else ''
-            html += card(
-                f"<b>🎵 {esc(tr['title'])}</b> — {esc(tr['artist'])}<br>"
-                f"💿 {esc(tr['album'])} · 📅 {esc(tr.get('release_date','?'))}"
-                f"{spotify_btn}{apple_btn}",
-                '#f0fff0', '#4CAF50'
-            )
-        else:
-            html += card(
-                f"🎵 <b>Titre non identifié</b> — {esc(tr['error'])}<br>"
-                f"<span style='color:#888; font-size:12px;'>Ajoute une clé AudD.io pour identifier le titre exact.</span>",
-                '#fff8e1', '#FFC107'
-            )
-
-        html += "<br><b style='color:#555;'>🤖 Analyse audio (genre & tags) :</b>"
-        for res in results['genres']:
-            if res['success']:
-                rows = ''.join([
-                    f"<tr>"
-                    f"<td style='padding:3px 10px;'>#{i+1}</td>"
-                    f"<td style='padding:3px 10px;'><b>{esc(r['label'])}</b></td>"
-                    f"<td style='padding:3px 10px; color:#4CAF50;'>{r['score']*100:.1f}%</td>"
-                    f"<td style='padding:3px 10px;'><div style='background:#4CAF50; height:10px; width:{r['score']*200:.0f}px; border-radius:5px;'></div></td>"
-                    f"</tr>"
-                    for i, r in enumerate(res['top_results'])
-                ])
+            html = "<h4 style='color:#FF9800;'>🎯 Résultats d'identification</h4>"
+            tr = results['title']
+            if tr['success']:
+                _sp = safe_url(tr.get('spotify_url', ''))
+                _ap = safe_url(tr.get('apple_url', ''))
+                spotify_btn = f" &nbsp;<a href='{esc(_sp)}' target='_blank' style='color:#1DB954;'>▶ Spotify</a>" if _sp else ''
+                apple_btn = f" &nbsp;<a href='{esc(_ap)}' target='_blank' style='color:#fc3c44;'>🍎 Apple Music</a>" if _ap else ''
                 html += card(
-                    f"<b>🤖 {res['model_name']}</b> — <span style='color:#888; font-size:12px;'>{res['description']}</span><br><br>"
-                    f"<table style='border-collapse:collapse; width:100%;'>{rows}</table>",
-                    '#f8f8ff', '#7c83e5'
+                    f"<b>🎵 {esc(tr['title'])}</b> — {esc(tr['artist'])}<br>"
+                    f"💿 {esc(tr['album'])} · 📅 {esc(tr.get('release_date','?'))}"
+                    f"{spotify_btn}{apple_btn}",
+                    '#f0fff0', '#4CAF50'
                 )
             else:
                 html += card(
-                    f"<b>🤖 {esc(res['model_name'])}</b> — ❌ {esc(res['error'])}",
-                    '#fff0f0', '#f44336'
+                    f"🎵 <b>Titre non identifié</b> — {esc(tr['error'])}<br>"
+                    f"<span style='color:#888; font-size:12px;'>Ajoute une clé AudD.io pour identifier le titre exact.</span>",
+                    '#fff8e1', '#FFC107'
                 )
-        display(HTML(html))
+
+            html += "<br><b style='color:#555;'>🤖 Analyse audio (genre & tags) :</b>"
+            for res in results['genres']:
+                if res['success']:
+                    rows = ''.join([
+                        f"<tr>"
+                        f"<td style='padding:3px 10px;'>#{i+1}</td>"
+                        f"<td style='padding:3px 10px;'><b>{esc(r['label'])}</b></td>"
+                        f"<td style='padding:3px 10px; color:#4CAF50;'>{r['score']*100:.1f}%</td>"
+                        f"<td style='padding:3px 10px;'><div style='background:#4CAF50; height:10px; width:{r['score']*200:.0f}px; border-radius:5px;'></div></td>"
+                        f"</tr>"
+                        for i, r in enumerate(res['top_results'])
+                    ])
+                    html += card(
+                        f"<b>🤖 {res['model_name']}</b> — <span style='color:#888; font-size:12px;'>{res['description']}</span><br><br>"
+                        f"<table style='border-collapse:collapse; width:100%;'>{rows}</table>",
+                        '#f8f8ff', '#7c83e5'
+                    )
+                else:
+                    html += card(
+                        f"<b>🤖 {esc(res['model_name'])}</b> — ❌ {esc(res['error'])}",
+                        '#fff0f0', '#f44336'
+                    )
+            display(HTML(html))
+        finally:
+            _GPU_LOCK.release()
 
 def on_s2_identify(b):
-    _run_async(s2_btn, _s2_identify_work)
+    _run_async(s2_btn, _s2_identify_work, s2_out)
 
 s2_btn.on_click(on_s2_identify)
 
@@ -745,31 +766,37 @@ def _s3_generate_work():
         if fname == 'Aucun fichier':
             display(HTML(error_card("Télécharge d'abord un fichier en étape ①."))); return
         path = f'./downloads/{fname}'
-        s3_progress_bar.value = 0
-        s3_progress_label.value = info_card('⏳ Chargement du modèle MusicGen small...')
+        # Verrou : une seule tâche lourde (P2/P3) à la fois sur le device.
+        if not _GPU_LOCK.acquire(blocking=False):
+            display(HTML(info_card('⏳ Une autre tâche est déjà en cours (identification ou génération). Réessaie quand elle sera terminée.'))); return
+        try:
+            s3_progress_bar.value = 0
+            s3_progress_label.value = info_card('⏳ Chargement du modèle MusicGen small...')
 
-        def progress_cb(step, total, msg):
-            s3_progress_bar.max = max(total, 1)
-            s3_progress_bar.value = step
-            s3_progress_label.value = info_card(msg)
+            def progress_cb(step, total, msg):
+                s3_progress_bar.max = max(total, 1)
+                s3_progress_bar.value = step
+                s3_progress_label.value = info_card(msg)
 
-        res = p3_complete_music(path, progress_cb=progress_cb)
-        if res['success']:
-            dur = res['duration']
-            size_kb = os.path.getsize(res['path']) / 1024
-            display(HTML(card(
-                f"<b>✅ Musique complétée !</b><br>"
-                f"⏱️ Durée finale : <b>{dur:.0f}s ({dur/60:.1f}min)</b><br>"
-                f"📦 Taille : {size_kb:.0f} KB"
-            )))
-            display(Audio(res['path']))
-            if colab_files:
-                colab_files.download(res['path'])
-        else:
-            display(HTML(error_card(res['error'])))
+            res = p3_complete_music(path, progress_cb=progress_cb)
+            if res['success']:
+                dur = res['duration']
+                size_kb = os.path.getsize(res['path']) / 1024
+                display(HTML(card(
+                    f"<b>✅ Musique complétée !</b><br>"
+                    f"⏱️ Durée finale : <b>{dur:.0f}s ({dur/60:.1f}min)</b><br>"
+                    f"📦 Taille : {size_kb:.0f} KB"
+                )))
+                display(Audio(res['path']))
+                if colab_files:
+                    colab_files.download(res['path'])
+            else:
+                display(HTML(error_card(res['error'])))
+        finally:
+            _GPU_LOCK.release()
 
 def on_s3_generate(b):
-    _run_async(s3_btn, _s3_generate_work)
+    _run_async(s3_btn, _s3_generate_work, s3_out)
 
 s3_btn.on_click(on_s3_generate)
 
