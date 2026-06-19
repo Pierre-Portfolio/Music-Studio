@@ -381,6 +381,13 @@ def p3_complete_music(audio_path: str, progress_cb=None, prompt: str = 'music') 
 
     try:
         extract = p3_load_audio_mono(audio_path, sr)
+        if extract.size == 0:                        # fichier illisible / piste vide
+            return {'success': False, 'path': '', 'duration': 0,
+                    'error': 'Extrait vide ou illisible (fichier audio invalide ?).'}
+        # Si l'extrait dépasse déjà la cible, on le rogne : sinon le fichier de
+        # sortie dépasserait les 2min30 annoncés (missing=0 ne tronque rien).
+        if len(extract) > int(TARGET_DURATION * sr):
+            extract = extract[:int(TARGET_DURATION * sr)]
         extract_dur = len(extract) / sr
         missing = max(0, TARGET_DURATION - extract_dur)
 
