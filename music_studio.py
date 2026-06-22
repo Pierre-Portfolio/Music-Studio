@@ -281,7 +281,8 @@ print('✅ Partie 2 prête —', len(P2_MODELS), 'modèles genre + AudD.io pour 
 # Cellule 3.1 — Installation Partie 3
 # Versions épinglées (reproductibilité + réduit le risque supply-chain).
 # torchaudio aligné sur 2.11.0 = même version que torch (cohérence avec la Partie 2).
-!pip install "transformers==4.44.2" "accelerate==0.34.2" "scipy==1.13.1" "torchaudio==2.11.0" --quiet
+# scipy aligné sur 1.14.1 = satisfait access (>=1.14.1) et tsfresh (>=1.14.0) préinstallés sur Colab (supprime les conflits du resolver pip).
+!pip install "transformers==4.44.2" "accelerate==0.34.2" "scipy==1.14.1" "torchaudio==2.11.0" --quiet
 print('✅ Dépendances Partie 3 installées')
 
 # Cellule 3.2 — Imports & chargement modèle (small par défaut)
