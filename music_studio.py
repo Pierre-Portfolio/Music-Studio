@@ -684,6 +684,7 @@ def _s2_identify_work():
             audd_key = s2_audd_key.value.strip()
             chosen = [m for m in P2_MODELS if m['id'] in s2_model_select.value] or P2_MODELS
             s2_progress_bar.value = 0
+            s2_progress_label.value = info_card('⏳ Identification en cours...')
 
             def progress_cb(step, total, msg):
                 s2_progress_bar.max = max(total, 1)
