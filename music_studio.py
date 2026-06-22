@@ -498,22 +498,28 @@ import threading
 # globaux partagés) -> risque d'OOM ou de résultats corrompus.
 _GPU_LOCK = threading.Lock()
 
-def _run_async(button, worker, out=None):
-    # Exécute le travail lourd (identification, génération) hors du thread principal
-    # pour ne pas figer l'UI ; le bouton est désactivé le temps du traitement.
-    def runner():
-        try:
-            worker()
-        except Exception as e:
-            # Filet : sans ça, une erreur imprévue (hors des fonctions qui catchent
-            # déjà) partirait dans stderr du thread et l'UI resterait vide.
-            if out is not None:
-                with out:
-                    display(HTML(error_card(f'Erreur inattendue : {e}')))
-        finally:
-            button.disabled = False
+def _run_task(button, worker, out=None):
+    # Exécute le travail lourd (identification, génération) de façon SYNCHRONE,
+    # sur le thread principal du kernel, puis réactive le bouton.
+    #
+    # ⚠️ Pourquoi pas de thread d'arrière-plan ? Sous Google Colab, les messages
+    # `comm` émis depuis un thread secondaire ne sont PAS relayés au navigateur :
+    # les mises à jour de widgets (barre de progression, label, sorties) faites
+    # dans un thread restaient donc invisibles — l'UI semblait figée et aucun
+    # retour n'apparaissait, même après plusieurs minutes. En restant sur le
+    # thread principal, ces mises à jour s'affichent en direct (comme une barre
+    # tqdm). Le verrou GPU sérialise déjà les tâches : on ne perd rien.
     button.disabled = True
-    threading.Thread(target=runner, daemon=True).start()
+    try:
+        worker()
+    except Exception as e:
+        # Filet : sans ça, une erreur imprévue (hors des fonctions qui catchent
+        # déjà) laisserait l'UI sans aucun retour.
+        if out is not None:
+            with out:
+                display(HTML(error_card(f'Erreur inattendue : {e}')))
+    finally:
+        button.disabled = False
 
 # Échappement HTML : toute donnée externe (métadonnées AudD, noms de fichiers,
 # messages d'erreur, labels de modèle) est passée par esc() avant injection dans
@@ -741,7 +747,7 @@ def _s2_identify_work():
             _GPU_LOCK.release()
 
 def on_s2_identify(b):
-    _run_async(s2_btn, _s2_identify_work, s2_out)
+    _run_task(s2_btn, _s2_identify_work, s2_out)
 
 s2_btn.on_click(on_s2_identify)
 
@@ -806,7 +812,7 @@ def _s3_generate_work():
             _GPU_LOCK.release()
 
 def on_s3_generate(b):
-    _run_async(s3_btn, _s3_generate_work, s3_out)
+    _run_task(s3_btn, _s3_generate_work, s3_out)
 
 s3_btn.on_click(on_s3_generate)
 
