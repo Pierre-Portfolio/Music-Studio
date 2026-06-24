@@ -486,7 +486,7 @@ print('✅ ipywidgets installé')
 # Cellule 4.2 — Interface graphique unifiée
 import ipywidgets as widgets
 import html as _html
-from IPython.display import display, Audio, HTML, clear_output
+from IPython.display import display, Audio, HTML, clear_output, FileLink
 try:
     from google.colab import files as colab_files
 except ImportError:        # permet d'importer le module hors Colab (tests / lint)
@@ -541,6 +541,30 @@ def info_card(msg):
     return card(msg, '#f0f4ff', '#5c6bc0')
 def sep():
     return widgets.HTML("<hr style='border:1px solid #ddd; margin:20px 0;'>")
+
+def offer_download(path):
+    # Rend le fichier récupérable de façon robuste, même quand le téléchargement
+    # automatique de Colab est bloqué par le navigateur ou qu'on tourne hors Colab.
+    #   - Toujours : affiche le chemin serveur + un lien cliquable (FileLink) qui
+    #     fonctionne en Jupyter local et reste dispo si l'auto-download échoue.
+    #   - Dans Colab : tente en plus le téléchargement auto, sans planter si bloqué.
+    rel = os.path.relpath(path)
+    display(HTML(card(
+        f"⬇️ <b>Fichier prêt</b> — <code>{esc(rel)}</code><br>"
+        f"<small>Si le téléchargement automatique ne démarre pas, clique le lien "
+        f"ci-dessous, ou ouvre le panneau <b>Fichiers</b> (dossier "
+        f"<code>{esc(os.path.dirname(rel) or '.')}</code>) pour le récupérer.</small>"
+    )))
+    try:
+        display(FileLink(rel, result_html_prefix='👉 Télécharger : '))
+    except Exception:
+        pass
+    if colab_files:
+        try:
+            colab_files.download(path)
+        except Exception:
+            # Le navigateur peut bloquer le download auto : le lien manuel reste dispo.
+            pass
 
 header = widgets.HTML("""
 <div style='background:linear-gradient(135deg,#1a1a2e,#16213e,#0f3460);
@@ -612,8 +636,7 @@ def on_s1_download(b):
             )))
             if s1_fmt.value in ['mp3', 'wav']:
                 display(Audio(res['path']))
-            if colab_files:
-                colab_files.download(res['path'])
+            offer_download(res['path'])
             refresh_dropdowns(res['path'])
         else:
             display(HTML(error_card(res['error'])))
@@ -804,8 +827,7 @@ def _s3_generate_work():
                     f"📦 Taille : {size_kb:.0f} KB"
                 )))
                 display(Audio(res['path']))
-                if colab_files:
-                    colab_files.download(res['path'])
+                offer_download(res['path'])
             else:
                 display(HTML(error_card(res['error'])))
         finally:
