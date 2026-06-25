@@ -661,12 +661,13 @@ header = widgets.HTML("""
 
 def refresh_dropdowns(path=''):
     choices = p1_get_audio_files() or ['Aucun fichier']
-    for dd in (s2_file, s5_file):
+    for dd in (s2_file, s4_file, s5_file):
         dd.options = choices
         if dd.value not in choices:          # évite l'exception ipywidgets
             dd.value = choices[0]
     if path and os.path.basename(path) in choices:
         s2_file.value = os.path.basename(path)
+        s4_file.value = os.path.basename(path)
         s5_file.value = os.path.basename(path)
 
 # Listing initial calculé une seule fois et partagé par les deux dropdowns
