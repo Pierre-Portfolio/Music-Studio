@@ -37,7 +37,7 @@ Notebook **Google Colab** tout-en-un qui transforme un court extrait audio en un
 - Étape **optionnelle** : elle n'altère ni l'audio ni la complétion qui suit
 
 ### ④ Reconnaissance par les paroles (Whisper + Genius)
-- **Transcription** des voix de l'extrait en texte via **Whisper** (`openai/whisper-*`, HuggingFace) — modèle au choix (*tiny* / *base* / *small*)
+- **Transcription** des voix de l'extrait en texte via **Whisper** (`openai/whisper-*`, HuggingFace) — modèle au choix (*tiny* / *base* / *small*, **base** par défaut)
 - **Recherche inversée** : retrouve le morceau **à partir des paroles transcrites** grâce à l'API **[Genius](https://genius.com/api-clients)** (token gratuit)
 - Sans token Genius, seule la transcription est affichée ; avec token, les **meilleurs morceaux correspondants** (titre · artiste · lien) sont listés
 - Le meilleur résultat est **repris automatiquement** dans l'étape ③ Paroles

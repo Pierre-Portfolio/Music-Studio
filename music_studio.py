@@ -604,7 +604,7 @@ def p4_get_asr(model_id):
         _ASR_PIPES[model_id] = pipeline('automatic-speech-recognition', model=model_id, device=dev)
     return _ASR_PIPES[model_id]
 
-def p4_transcribe(audio_path, model_id='openai/whisper-small', max_seconds=60, progress_cb=None):
+def p4_transcribe(audio_path, model_id='openai/whisper-base', max_seconds=60, progress_cb=None):
     # Transcrit les voix de l'extrait en texte (paroles approximatives) via Whisper.
     try:
         if progress_cb: progress_cb(0, 2, "⏳ Chargement du modèle Whisper (1er appel : téléchargement)...")
@@ -949,9 +949,9 @@ s4_genius = widgets.Password(
 )
 s4_model = widgets.Dropdown(
     options=[('Whisper tiny (le + rapide)', 'openai/whisper-tiny'),
-             ('Whisper base', 'openai/whisper-base'),
-             ('Whisper small (recommandé)', 'openai/whisper-small')],
-    value='openai/whisper-small',
+             ('Whisper base (recommandé)', 'openai/whisper-base'),
+             ('Whisper small (plus précis)', 'openai/whisper-small')],
+    value='openai/whisper-base',
     description='Modèle :',
     layout=widgets.Layout(width='500px'),
     style={'description_width': '70px'}
