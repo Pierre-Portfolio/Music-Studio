@@ -566,6 +566,33 @@ def offer_download(path):
             # Le navigateur peut bloquer le download auto : le lien manuel reste dispo.
             pass
 
+# Dernier titre/artiste identifiés en ② — réutilisés par l'étape ③ (paroles).
+_LAST_IDENTIFIED = {'artist': '', 'title': ''}
+
+def p_get_lyrics(artist, title):
+    # Récupère les paroles via lyrics.ovh (gratuit, sans clé). Renvoie un dict
+    # uniforme {success, lyrics, error}. Un statut 404 = titre absent de la base.
+    import requests
+    from urllib.parse import quote
+    artist = (artist or '').strip()
+    title = (title or '').strip()
+    if not artist or not title:
+        return {'success': False, 'lyrics': '', 'error': 'Artiste et titre requis'}
+    try:
+        url = f'https://api.lyrics.ovh/v1/{quote(artist)}/{quote(title)}'
+        r = requests.get(url, timeout=(10, 30))
+        if r.status_code == 404:
+            return {'success': False, 'lyrics': '', 'error': 'Titre introuvable dans la base lyrics.ovh'}
+        if r.status_code != 200:
+            return {'success': False, 'lyrics': '', 'error': f'Erreur API lyrics.ovh ({r.status_code})'}
+        lyrics = (r.json().get('lyrics') or '').strip()
+        if not lyrics:
+            return {'success': False, 'lyrics': '', 'error': "Paroles vides renvoyées par l'API"}
+        lyrics = chr(10).join(lyrics.splitlines())   # normalise les sauts de ligne (CRLF/CR -> LF)
+        return {'success': True, 'lyrics': lyrics, 'error': ''}
+    except Exception as e:
+        return {'success': False, 'lyrics': '', 'error': str(e)}
+
 header = widgets.HTML("""
 <div style='background:linear-gradient(135deg,#1a1a2e,#16213e,#0f3460);
      padding:24px; border-radius:14px; margin-bottom:10px;'>
@@ -576,13 +603,13 @@ header = widgets.HTML("""
 
 def refresh_dropdowns(path=''):
     choices = p1_get_audio_files() or ['Aucun fichier']
-    for dd in (s2_file, s3_file):
+    for dd in (s2_file, s4_file):
         dd.options = choices
         if dd.value not in choices:          # évite l'exception ipywidgets
             dd.value = choices[0]
     if path and os.path.basename(path) in choices:
         s2_file.value = os.path.basename(path)
-        s3_file.value = os.path.basename(path)
+        s4_file.value = os.path.basename(path)
 
 # Listing initial calculé une seule fois et partagé par les deux dropdowns
 # (évite de globber le dossier ./downloads une fois par widget à la construction).
@@ -726,6 +753,8 @@ def _s2_identify_work():
             html = "<h4 style='color:#FF9800;'>🎯 Résultats d'identification</h4>"
             tr = results['title']
             if tr['success']:
+                _LAST_IDENTIFIED['artist'] = tr['artist']
+                _LAST_IDENTIFIED['title'] = tr['title']
                 _sp = safe_url(tr.get('spotify_url', ''))
                 _ap = safe_url(tr.get('apple_url', ''))
                 spotify_btn = f" &nbsp;<a href='{esc(_sp)}' target='_blank' style='color:#1DB954;'>▶ Spotify</a>" if _sp else ''
@@ -775,33 +804,97 @@ def on_s2_identify(b):
 s2_btn.on_click(on_s2_identify)
 
 # ── SECTION 3 ──
-s3_title = widgets.HTML("<h3 style='color:#6200ea; margin-bottom:8px;'>③ Compléter en 2min30</h3>")
+s3_title = widgets.HTML("<h3 style='color:#00bcd4; margin-bottom:8px;'>③ Récupérer les paroles</h3>")
 s3_info = widgets.HTML(info_card(
+    "📜 <b>Lyrics.ovh</b> récupère les paroles à partir de l'artiste et du titre — <b>aucune clé requise</b>.<br>"
+    "<span style='color:#888; font-size:12px;'>Laisse les champs vides pour réutiliser l'artiste/titre identifiés en ②, "
+    "ou saisis-les à la main (🔄 pour les pré-remplir). Toutes les chansons ne sont pas couvertes.</span>"
+))
+s3_artist = widgets.Text(
+    placeholder='Artiste (ex. Daft Punk)',
+    description='Artiste :',
+    layout=widgets.Layout(width='500px'),
+    style={'description_width': '70px'}
+)
+s3_song = widgets.Text(
+    placeholder='Titre (ex. Get Lucky)',
+    description='Titre :',
+    layout=widgets.Layout(width='500px'),
+    style={'description_width': '70px'}
+)
+s3_refresh = widgets.Button(description='🔄', layout=widgets.Layout(width='50px'),
+    tooltip="Reprendre l'artiste/titre identifiés en ②")
+def _s3_pull_identified(b=None):
+    if _LAST_IDENTIFIED.get('artist'):
+        s3_artist.value = _LAST_IDENTIFIED['artist']
+    if _LAST_IDENTIFIED.get('title'):
+        s3_song.value = _LAST_IDENTIFIED['title']
+s3_refresh.on_click(_s3_pull_identified)
+s3_btn = widgets.Button(description='📜 Chercher les paroles', button_style='info',
+    layout=widgets.Layout(width='220px', height='38px'))
+s3_out = widgets.Output()
+
+def _s3_lyrics_work():
+    with s3_out:
+        clear_output()
+        artist = s3_artist.value.strip() or _LAST_IDENTIFIED.get('artist', '')
+        title = s3_song.value.strip() or _LAST_IDENTIFIED.get('title', '')
+        if not artist or not title:
+            display(HTML(error_card(
+                "Renseigne un artiste et un titre, ou lance d'abord l'identification ② (avec une clé AudD)."
+            ))); return
+        display(HTML(info_card(f"⏳ Recherche des paroles de « {esc(title)} » — {esc(artist)}...")))
+        res = p_get_lyrics(artist, title)
+        clear_output()
+        if res['success']:
+            body = esc(res['lyrics']).replace(chr(10), '<br>')
+            display(HTML(card(
+                f"<b>📜 {esc(title)}</b> — {esc(artist)} "
+                f"<span style='color:#888; font-size:12px;'>(source : lyrics.ovh)</span><br><br>"
+                f"<div style='max-height:340px; overflow:auto; line-height:1.5; font-size:14px;'>{body}</div>",
+                '#f0fdff', '#00bcd4'
+            )))
+        else:
+            display(HTML(card(
+                f"📜 <b>Paroles indisponibles</b> — {esc(res['error'])}<br>"
+                f"<span style='color:#888; font-size:12px;'>Vérifie l'orthographe de l'artiste/titre, "
+                f"ou la chanson n'est peut-être pas dans la base lyrics.ovh.</span>",
+                '#fff8e1', '#FFC107'
+            )))
+
+def on_s3_lyrics(b):
+    _run_task(s3_btn, _s3_lyrics_work, s3_out)
+
+s3_btn.on_click(on_s3_lyrics)
+
+# ── SECTION 4 ──
+s4_title = widgets.HTML("<h3 style='color:#6200ea; margin-bottom:8px;'>④ Compléter en 2min30</h3>")
+s4_info = widgets.HTML(info_card(
     '🧩 <b>Comment ça marche ?</b><br>'
     "L'extrait est conservé au centre de la piste. "
     "MusicGen génère l'intro et l'outro par chunks de <b>20s</b> enchaînés, "
     'puis tout est assemblé en un fichier WAV de <b>2min30</b>.<br>'
     '<span style="color:#888; font-size:12px;">⚠️ La génération peut prendre 5-10min selon la durée manquante.</span>'
 ))
-s3_file = widgets.Dropdown(
+s4_file = widgets.Dropdown(
     options=_initial_audio_files,
     description='Fichier :',
     layout=widgets.Layout(width='500px'),
     style={'description_width': '70px'}
 )
-s3_refresh = widgets.Button(description='🔄', layout=widgets.Layout(width='50px'))
-s3_refresh.on_click(lambda b: refresh_dropdowns())   # MAJ + corrige la value (évite TraitError)
-s3_progress_bar = widgets.IntProgress(value=0, min=0, max=100,
+s4_refresh = widgets.Button(description='🔄', layout=widgets.Layout(width='50px'))
+s4_refresh.on_click(lambda b: refresh_dropdowns())   # MAJ + corrige la value (évite TraitError)
+s4_progress_bar = widgets.IntProgress(value=0, min=0, max=100,
     description='', layout=widgets.Layout(width='580px'))
-s3_progress_label = widgets.HTML('')
-s3_btn = widgets.Button(description='🎼 Générer 2min30', button_style='success',
+s4_progress_label = widgets.HTML('')
+s4_btn = widgets.Button(description='🎼 Générer 2min30', button_style='success',
     layout=widgets.Layout(width='200px', height='42px'))
-s3_out = widgets.Output()
+s4_out = widgets.Output()
 
-def _s3_generate_work():
-    with s3_out:
+def _s4_generate_work():
+    with s4_out:
         clear_output()
-        fname = s3_file.value
+        fname = s4_file.value
         if fname == 'Aucun fichier':
             display(HTML(error_card("Télécharge d'abord un fichier en étape ①."))); return
         path = f'./downloads/{fname}'
@@ -809,13 +902,13 @@ def _s3_generate_work():
         if not _GPU_LOCK.acquire(blocking=False):
             display(HTML(info_card('⏳ Une autre tâche est déjà en cours (identification ou génération). Réessaie quand elle sera terminée.'))); return
         try:
-            s3_progress_bar.value = 0
-            s3_progress_label.value = info_card('⏳ Chargement du modèle MusicGen small...')
+            s4_progress_bar.value = 0
+            s4_progress_label.value = info_card('⏳ Chargement du modèle MusicGen small...')
 
             def progress_cb(step, total, msg):
-                s3_progress_bar.max = max(total, 1)
-                s3_progress_bar.value = step
-                s3_progress_label.value = info_card(msg)
+                s4_progress_bar.max = max(total, 1)
+                s4_progress_bar.value = step
+                s4_progress_label.value = info_card(msg)
 
             res = p3_complete_music(path, progress_cb=progress_cb)
             if res['success']:
@@ -833,10 +926,10 @@ def _s3_generate_work():
         finally:
             _GPU_LOCK.release()
 
-def on_s3_generate(b):
-    _run_task(s3_btn, _s3_generate_work, s3_out)
+def on_s4_generate(b):
+    _run_task(s4_btn, _s4_generate_work, s4_out)
 
-s3_btn.on_click(on_s3_generate)
+s4_btn.on_click(on_s4_generate)
 
 # ── ASSEMBLAGE FINAL ──
 ui = widgets.VBox([
@@ -855,10 +948,15 @@ ui = widgets.VBox([
     s2_out,
     sep(),
     s3_title, s3_info,
-    widgets.HBox([s3_file, s3_refresh]),
-    s3_progress_bar, s3_progress_label,
-    s3_btn,
+    s3_artist, s3_song,
+    widgets.HBox([s3_btn, widgets.HTML('&nbsp;&nbsp;'), s3_refresh]),
     s3_out,
+    sep(),
+    s4_title, s4_info,
+    widgets.HBox([s4_file, s4_refresh]),
+    s4_progress_bar, s4_progress_label,
+    s4_btn,
+    s4_out,
 ], layout=widgets.Layout(padding='16px', width='720px'))
 
 display(ui)

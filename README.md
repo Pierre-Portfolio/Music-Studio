@@ -8,7 +8,7 @@
 # Music Studio — Download · Identify · Complete
 
 ## Aperçu
-Notebook **Google Colab** tout-en-un qui transforme un court extrait audio en un morceau complet. À partir de l'URL d'un **Reel Instagram** ou d'un **Short YouTube**, l'outil télécharge l'audio, **identifie** le titre exact (AudD.io) et le genre musical (modèles HuggingFace), puis **complète automatiquement** l'extrait en une piste de **2min30** grâce à **MusicGen** (Meta). Le tout est piloté depuis une interface graphique unifiée dans une seule cellule Colab. Aucune configuration manuelle de code n'est nécessaire.
+Notebook **Google Colab** tout-en-un qui transforme un court extrait audio en un morceau complet. À partir de l'URL d'un **Reel Instagram** ou d'un **Short YouTube**, l'outil télécharge l'audio, **identifie** le titre exact (AudD.io) et le genre musical (modèles HuggingFace), récupère les **paroles** (Lyrics.ovh), puis **complète automatiquement** l'extrait en une piste de **2min30** grâce à **MusicGen** (Meta). Le tout est piloté depuis une interface graphique unifiée dans une seule cellule Colab. Aucune configuration manuelle de code n'est nécessaire.
 
 ## Fonctionnalités
 
@@ -30,7 +30,13 @@ Notebook **Google Colab** tout-en-un qui transforme un court extrait audio en un
 - Affichage des **5 meilleurs résultats** par modèle avec scores et barres de confiance
 - Barre de progression étape par étape (titre puis chaque modèle)
 
-### ③ Complétion musicale (→ 2min30)
+### ③ Paroles (Lyrics.ovh)
+- Récupération des **paroles** du morceau via l'API **[Lyrics.ovh](https://lyrics.ovh)** — **gratuite, sans clé**
+- Artiste et titre **réutilisés** depuis l'identification ② (clé AudD requise) ou **saisis / corrigés à la main**
+- Paroles affichées directement dans l'interface (zone défilante), avec repli clair si le titre n'est pas dans la base
+- Étape **optionnelle** : elle n'altère ni l'audio ni la complétion qui suit
+
+### ④ Complétion musicale (→ 2min30)
 - Génération des parties manquantes par **MusicGen** (`facebook/musicgen-small`, Meta)
 - L'extrait original est conservé au centre ; le modèle compose une **intro (≈45 %)** et une **outro (≈55 %)** pour atteindre la cible de **150 s (2min30)**
 - Génération **par chunks de 20 s** enchaînés, chaque chunk servant de contexte au suivant
@@ -38,10 +44,10 @@ Notebook **Google Colab** tout-en-un qui transforme un court extrait audio en un
 - Détection automatique du **GPU** (CUDA) avec repli sur CPU et avertissement
 - Lecteur audio intégré et téléchargement direct du résultat
 
-### ④ Interface graphique unifiée
+### ⑤ Interface graphique unifiée
 - UI complète construite avec **ipywidgets**, regroupée dans **une seule cellule** Colab
-- Trois sections guidées (Télécharger · Identifier · Compléter) reliées entre elles
-- Menus déroulants synchronisés : un fichier téléchargé apparaît automatiquement dans les étapes 2 et 3
+- Quatre sections guidées (Télécharger · Identifier · Paroles · Compléter) reliées entre elles
+- Menus déroulants synchronisés : un fichier téléchargé apparaît automatiquement dans les étapes de génération
 - Barres de progression, messages d'état colorés (info / succès / erreur) et lecteurs audio en ligne
 
 ## Technologies
@@ -50,6 +56,7 @@ Notebook **Google Colab** tout-en-un qui transforme un court extrait audio en un
 - **HuggingFace Transformers** — MusicGen Small, CLAP, AST
 - **PyTorch** / **torchaudio** — chargement et rééchantillonnage audio
 - **AudD.io API** — reconnaissance du titre
+- **Lyrics.ovh** — récupération des paroles (gratuit, sans clé)
 - **scipy** — export WAV
 - **ipywidgets** + **IPython.display** — interface graphique
 - **FFmpeg** (via yt-dlp) — conversion des formats audio
@@ -86,7 +93,10 @@ URL Reel / Short
 ②  AudD.io (titre)  +  CLAP & AST (genre)
       │
       ▼
-③  MusicGen ──▶ intro 45% + extrait + outro 55%  (chunks 20s)
+③  Lyrics.ovh ──▶ paroles affichées dans l'UI  (optionnel)
+      │
+      ▼
+④  MusicGen ──▶ intro 45% + extrait + outro 55%  (chunks 20s)
       │
       ▼
    ./generated/completed_music.wav   (≈ 2min30)
