@@ -593,6 +593,64 @@ def p_get_lyrics(artist, title):
     except Exception as e:
         return {'success': False, 'lyrics': '', 'error': str(e)}
 
+# ── Transcription (Whisper) + recherche inversée du titre par les paroles (Genius) ──
+_ASR_PIPES = {}
+def p4_get_asr(model_id):
+    # Pipeline Whisper chargé une seule fois par modèle puis réutilisé.
+    if model_id not in _ASR_PIPES:
+        import torch
+        from transformers import pipeline
+        dev = 0 if torch.cuda.is_available() else -1
+        _ASR_PIPES[model_id] = pipeline('automatic-speech-recognition', model=model_id, device=dev)
+    return _ASR_PIPES[model_id]
+
+def p4_transcribe(audio_path, model_id='openai/whisper-small', max_seconds=60, progress_cb=None):
+    # Transcrit les voix de l'extrait en texte (paroles approximatives) via Whisper.
+    try:
+        if progress_cb: progress_cb(0, 2, "⏳ Chargement du modèle Whisper (1er appel : téléchargement)...")
+        asr = p4_get_asr(model_id)
+        audio_np = _to_mono(audio_path, 16000, max_seconds=max_seconds)
+        if progress_cb: progress_cb(1, 2, "⏳ Transcription de l'audio...")
+        out = asr({'raw': audio_np, 'sampling_rate': 16000}, chunk_length_s=30, batch_size=8)
+        text = (out.get('text', '') if isinstance(out, dict) else str(out)).strip()
+        if progress_cb: progress_cb(2, 2, "✅ Transcription terminée")
+        if not text:
+            return {'success': False, 'text': '', 'error': "Aucune parole détectée dans l'extrait"}
+        return {'success': True, 'text': text, 'error': ''}
+    except Exception as e:
+        return {'success': False, 'text': '', 'error': str(e)}
+
+def p4_find_song(query_text, genius_token, max_hits=5):
+    # Recherche inversée : retrouve le morceau à partir d'un extrait de paroles via l'API Genius.
+    import requests
+    token = (genius_token or '').strip()
+    q = ' '.join((query_text or '').split())[:200]   # un fragment suffit ; borne la longueur
+    if not q:
+        return {'success': False, 'hits': [], 'error': 'Texte de recherche vide'}
+    if not token:
+        return {'success': False, 'hits': [], 'error': 'Token Genius requis pour retrouver le titre'}
+    try:
+        r = requests.get('https://api.genius.com/search', params={'q': q},
+                         headers={'Authorization': f'Bearer {token}'}, timeout=(10, 30))
+        if r.status_code == 401:
+            return {'success': False, 'hits': [], 'error': 'Token Genius invalide (401)'}
+        if r.status_code != 200:
+            return {'success': False, 'hits': [], 'error': f'Erreur API Genius ({r.status_code})'}
+        hits = r.json().get('response', {}).get('hits', [])
+        out = []
+        for h in hits[:max_hits]:
+            res = h.get('result', {})
+            out.append({
+                'title': res.get('title') or '?',
+                'artist': (res.get('primary_artist') or {}).get('name') or '?',
+                'url': res.get('url') or ''
+            })
+        if not out:
+            return {'success': False, 'hits': [], 'error': 'Aucun morceau trouvé pour ces paroles'}
+        return {'success': True, 'hits': out, 'error': ''}
+    except Exception as e:
+        return {'success': False, 'hits': [], 'error': str(e)}
+
 header = widgets.HTML("""
 <div style='background:linear-gradient(135deg,#1a1a2e,#16213e,#0f3460);
      padding:24px; border-radius:14px; margin-bottom:10px;'>
@@ -603,13 +661,13 @@ header = widgets.HTML("""
 
 def refresh_dropdowns(path=''):
     choices = p1_get_audio_files() or ['Aucun fichier']
-    for dd in (s2_file, s4_file):
+    for dd in (s2_file, s5_file):
         dd.options = choices
         if dd.value not in choices:          # évite l'exception ipywidgets
             dd.value = choices[0]
     if path and os.path.basename(path) in choices:
         s2_file.value = os.path.basename(path)
-        s4_file.value = os.path.basename(path)
+        s5_file.value = os.path.basename(path)
 
 # Listing initial calculé une seule fois et partagé par les deux dropdowns
 # (évite de globber le dossier ./downloads une fois par widget à la construction).
@@ -868,13 +926,12 @@ def on_s3_lyrics(b):
 s3_btn.on_click(on_s3_lyrics)
 
 # ── SECTION 4 ──
-s4_title = widgets.HTML("<h3 style='color:#6200ea; margin-bottom:8px;'>④ Compléter en 2min30</h3>")
+s4_title = widgets.HTML("<h3 style='color:#e91e63; margin-bottom:8px;'>④ Reconnaître par les paroles</h3>")
 s4_info = widgets.HTML(info_card(
-    '🧩 <b>Comment ça marche ?</b><br>'
-    "L'extrait est conservé au centre de la piste. "
-    "MusicGen génère l'intro et l'outro par chunks de <b>20s</b> enchaînés, "
-    'puis tout est assemblé en un fichier WAV de <b>2min30</b>.<br>'
-    '<span style="color:#888; font-size:12px;">⚠️ La génération peut prendre 5-10min selon la durée manquante.</span>'
+    "🎙️ <b>Whisper</b> transcrit les voix de l'extrait, puis <b>Genius</b> retrouve le morceau à partir de ces paroles.<br>"
+    "<span style='color:#888; font-size:12px;'>Token Genius gratuit sur "
+    "<a href='https://genius.com/api-clients' target='_blank'>genius.com/api-clients</a> — sans token, seule la transcription "
+    "est affichée. La transcription d'un chant n'est pas toujours fidèle (musique de fond, etc.).</span>"
 ))
 s4_file = widgets.Dropdown(
     options=_initial_audio_files,
@@ -884,17 +941,122 @@ s4_file = widgets.Dropdown(
 )
 s4_refresh = widgets.Button(description='🔄', layout=widgets.Layout(width='50px'))
 s4_refresh.on_click(lambda b: refresh_dropdowns())   # MAJ + corrige la value (évite TraitError)
-s4_progress_bar = widgets.IntProgress(value=0, min=0, max=100,
+s4_genius = widgets.Password(
+    placeholder='Token API Genius (optionnel — pour retrouver le titre)',
+    description='Genius :',
+    layout=widgets.Layout(width='500px'),
+    style={'description_width': '70px'}
+)
+s4_model = widgets.Dropdown(
+    options=[('Whisper tiny (le + rapide)', 'openai/whisper-tiny'),
+             ('Whisper base', 'openai/whisper-base'),
+             ('Whisper small (recommandé)', 'openai/whisper-small')],
+    value='openai/whisper-small',
+    description='Modèle :',
+    layout=widgets.Layout(width='500px'),
+    style={'description_width': '70px'}
+)
+s4_progress_bar = widgets.IntProgress(value=0, min=0, max=2,
     description='', layout=widgets.Layout(width='580px'))
 s4_progress_label = widgets.HTML('')
-s4_btn = widgets.Button(description='🎼 Générer 2min30', button_style='success',
-    layout=widgets.Layout(width='200px', height='42px'))
+s4_btn = widgets.Button(description='🎙️ Transcrire & retrouver', button_style='danger',
+    layout=widgets.Layout(width='220px', height='40px'))
 s4_out = widgets.Output()
 
-def _s4_generate_work():
+def _s4_recognize_work():
     with s4_out:
         clear_output()
         fname = s4_file.value
+        if fname == 'Aucun fichier':
+            display(HTML(error_card("Télécharge d'abord un fichier en étape ①."))); return
+        path = f'./downloads/{fname}'
+        # Verrou : une seule tâche lourde (modèle) à la fois sur le device.
+        if not _GPU_LOCK.acquire(blocking=False):
+            display(HTML(info_card('⏳ Une autre tâche est déjà en cours. Réessaie quand elle sera terminée.'))); return
+        try:
+            s4_progress_bar.value = 0
+            s4_progress_label.value = info_card('⏳ Préparation...')
+
+            def progress_cb(step, total, msg):
+                s4_progress_bar.max = max(total, 1)
+                s4_progress_bar.value = step
+                s4_progress_label.value = info_card(msg)
+
+            tr = p4_transcribe(path, model_id=s4_model.value, progress_cb=progress_cb)
+            clear_output()
+            if not tr['success']:
+                display(HTML(error_card(tr['error']))); return
+            body = esc(tr['text']).replace(chr(10), '<br>')
+            display(HTML(card(
+                f"<b>🎙️ Paroles extraites de l'extrait</b> "
+                f"<span style='color:#888; font-size:12px;'>(transcription Whisper — approximative)</span><br><br>"
+                f"<div style='max-height:240px; overflow:auto; line-height:1.5; font-size:14px;'>{body}</div>",
+                '#fff0f6', '#e91e63'
+            )))
+            fs = p4_find_song(tr['text'], s4_genius.value)
+            if fs['success']:
+                rows = ''
+                for i, h in enumerate(fs['hits']):
+                    u = safe_url(h['url'])
+                    link = f"<a href='{esc(u)}' target='_blank'>Genius ↗</a>" if u else ''
+                    rows += (
+                        f"<tr><td style='padding:4px 10px;'>#{i+1}</td>"
+                        f"<td style='padding:4px 10px;'><b>{esc(h['title'])}</b> — {esc(h['artist'])}</td>"
+                        f"<td style='padding:4px 10px;'>{link}</td></tr>"
+                    )
+                top = fs['hits'][0]
+                if top['artist'] != '?':
+                    _LAST_IDENTIFIED['artist'] = top['artist']
+                if top['title'] != '?':
+                    _LAST_IDENTIFIED['title'] = top['title']
+                display(HTML(card(
+                    f"<b>🔎 Morceaux correspondants (Genius)</b><br><br>"
+                    f"<table style='border-collapse:collapse; width:100%;'>{rows}</table><br>"
+                    f"<span style='color:#888; font-size:12px;'>Meilleur résultat repris automatiquement dans l'étape ③ Paroles.</span>",
+                    '#f0fff0', '#4CAF50'
+                )))
+            else:
+                display(HTML(card(
+                    f"🔎 <b>Recherche du titre indisponible</b> — {esc(fs['error'])}<br>"
+                    f"<span style='color:#888; font-size:12px;'>Ajoute un token Genius pour retrouver le morceau à partir des paroles ci-dessus.</span>",
+                    '#fff8e1', '#FFC107'
+                )))
+        finally:
+            _GPU_LOCK.release()
+
+def on_s4_recognize(b):
+    _run_task(s4_btn, _s4_recognize_work, s4_out)
+
+s4_btn.on_click(on_s4_recognize)
+
+# ── SECTION 5 ──
+s5_title = widgets.HTML("<h3 style='color:#6200ea; margin-bottom:8px;'>⑤ Compléter en 2min30</h3>")
+s5_info = widgets.HTML(info_card(
+    '🧩 <b>Comment ça marche ?</b><br>'
+    "L'extrait est conservé au centre de la piste. "
+    "MusicGen génère l'intro et l'outro par chunks de <b>20s</b> enchaînés, "
+    'puis tout est assemblé en un fichier WAV de <b>2min30</b>.<br>'
+    '<span style="color:#888; font-size:12px;">⚠️ La génération peut prendre 5-10min selon la durée manquante.</span>'
+))
+s5_file = widgets.Dropdown(
+    options=_initial_audio_files,
+    description='Fichier :',
+    layout=widgets.Layout(width='500px'),
+    style={'description_width': '70px'}
+)
+s5_refresh = widgets.Button(description='🔄', layout=widgets.Layout(width='50px'))
+s5_refresh.on_click(lambda b: refresh_dropdowns())   # MAJ + corrige la value (évite TraitError)
+s5_progress_bar = widgets.IntProgress(value=0, min=0, max=100,
+    description='', layout=widgets.Layout(width='580px'))
+s5_progress_label = widgets.HTML('')
+s5_btn = widgets.Button(description='🎼 Générer 2min30', button_style='success',
+    layout=widgets.Layout(width='200px', height='42px'))
+s5_out = widgets.Output()
+
+def _s5_generate_work():
+    with s5_out:
+        clear_output()
+        fname = s5_file.value
         if fname == 'Aucun fichier':
             display(HTML(error_card("Télécharge d'abord un fichier en étape ①."))); return
         path = f'./downloads/{fname}'
@@ -902,13 +1064,13 @@ def _s4_generate_work():
         if not _GPU_LOCK.acquire(blocking=False):
             display(HTML(info_card('⏳ Une autre tâche est déjà en cours (identification ou génération). Réessaie quand elle sera terminée.'))); return
         try:
-            s4_progress_bar.value = 0
-            s4_progress_label.value = info_card('⏳ Chargement du modèle MusicGen small...')
+            s5_progress_bar.value = 0
+            s5_progress_label.value = info_card('⏳ Chargement du modèle MusicGen small...')
 
             def progress_cb(step, total, msg):
-                s4_progress_bar.max = max(total, 1)
-                s4_progress_bar.value = step
-                s4_progress_label.value = info_card(msg)
+                s5_progress_bar.max = max(total, 1)
+                s5_progress_bar.value = step
+                s5_progress_label.value = info_card(msg)
 
             res = p3_complete_music(path, progress_cb=progress_cb)
             if res['success']:
@@ -926,10 +1088,10 @@ def _s4_generate_work():
         finally:
             _GPU_LOCK.release()
 
-def on_s4_generate(b):
-    _run_task(s4_btn, _s4_generate_work, s4_out)
+def on_s5_generate(b):
+    _run_task(s5_btn, _s5_generate_work, s5_out)
 
-s4_btn.on_click(on_s4_generate)
+s5_btn.on_click(on_s5_generate)
 
 # ── ASSEMBLAGE FINAL ──
 ui = widgets.VBox([
@@ -953,10 +1115,18 @@ ui = widgets.VBox([
     s3_out,
     sep(),
     s4_title, s4_info,
+    s4_genius,
     widgets.HBox([s4_file, s4_refresh]),
+    s4_model,
     s4_progress_bar, s4_progress_label,
     s4_btn,
     s4_out,
+    sep(),
+    s5_title, s5_info,
+    widgets.HBox([s5_file, s5_refresh]),
+    s5_progress_bar, s5_progress_label,
+    s5_btn,
+    s5_out,
 ], layout=widgets.Layout(padding='16px', width='720px'))
 
 display(ui)

@@ -36,7 +36,14 @@ Notebook **Google Colab** tout-en-un qui transforme un court extrait audio en un
 - Paroles affichées directement dans l'interface (zone défilante), avec repli clair si le titre n'est pas dans la base
 - Étape **optionnelle** : elle n'altère ni l'audio ni la complétion qui suit
 
-### ④ Complétion musicale (→ 2min30)
+### ④ Reconnaissance par les paroles (Whisper + Genius)
+- **Transcription** des voix de l'extrait en texte via **Whisper** (`openai/whisper-*`, HuggingFace) — modèle au choix (*tiny* / *base* / *small*)
+- **Recherche inversée** : retrouve le morceau **à partir des paroles transcrites** grâce à l'API **[Genius](https://genius.com/api-clients)** (token gratuit)
+- Sans token Genius, seule la transcription est affichée ; avec token, les **meilleurs morceaux correspondants** (titre · artiste · lien) sont listés
+- Le meilleur résultat est **repris automatiquement** dans l'étape ③ Paroles
+- ⚠️ La transcription d'un chant n'est pas toujours fidèle (musique de fond) — un extrait suffit toutefois souvent à retrouver le titre
+
+### ⑤ Complétion musicale (→ 2min30)
 - Génération des parties manquantes par **MusicGen** (`facebook/musicgen-small`, Meta)
 - L'extrait original est conservé au centre ; le modèle compose une **intro (≈45 %)** et une **outro (≈55 %)** pour atteindre la cible de **150 s (2min30)**
 - Génération **par chunks de 20 s** enchaînés, chaque chunk servant de contexte au suivant
@@ -44,9 +51,9 @@ Notebook **Google Colab** tout-en-un qui transforme un court extrait audio en un
 - Détection automatique du **GPU** (CUDA) avec repli sur CPU et avertissement
 - Lecteur audio intégré et téléchargement direct du résultat
 
-### ⑤ Interface graphique unifiée
+### ⑥ Interface graphique unifiée
 - UI complète construite avec **ipywidgets**, regroupée dans **une seule cellule** Colab
-- Quatre sections guidées (Télécharger · Identifier · Paroles · Compléter) reliées entre elles
+- Cinq sections guidées (Télécharger · Identifier · Paroles · Reconnaître · Compléter) reliées entre elles
 - Menus déroulants synchronisés : un fichier téléchargé apparaît automatiquement dans les étapes de génération
 - Barres de progression, messages d'état colorés (info / succès / erreur) et lecteurs audio en ligne
 
@@ -55,8 +62,10 @@ Notebook **Google Colab** tout-en-un qui transforme un court extrait audio en un
 - **yt-dlp** — extraction audio/vidéo Instagram & YouTube
 - **HuggingFace Transformers** — MusicGen Small, CLAP, AST
 - **PyTorch** / **torchaudio** — chargement et rééchantillonnage audio
-- **AudD.io API** — reconnaissance du titre
+- **AudD.io API** — reconnaissance du titre (par empreinte audio)
 - **Lyrics.ovh** — récupération des paroles (gratuit, sans clé)
+- **Whisper** (HuggingFace) — transcription des voix en texte
+- **Genius API** — recherche inversée du morceau par les paroles
 - **scipy** — export WAV
 - **ipywidgets** + **IPython.display** — interface graphique
 - **FFmpeg** (via yt-dlp) — conversion des formats audio
@@ -94,6 +103,7 @@ URL Reel / Short
       │
       ▼
 ③  Lyrics.ovh ──▶ paroles affichées dans l'UI  (optionnel)
+   Whisper + Genius ──▶ transcription + titre retrouvé  (optionnel)
       │
       ▼
 ④  MusicGen ──▶ intro 45% + extrait + outro 55%  (chunks 20s)
